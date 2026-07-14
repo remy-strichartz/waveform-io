@@ -42,9 +42,22 @@ BIAS GUARDS
     the observed tags), not from a manual; a coverage check warns when the run is
     too short to pin it down.
   * Every wrap decision carries a MARGIN (distance of the wrap estimate from the
-    integer it was rounded to); marginal decisions and residuals larger than half
-    a rollover period are counted, so a silent unwrap failure cannot pass
-    unnoticed.
+    integer it was rounded to); marginal decisions are counted (n_marginal), and
+    so are intervals whose best reconciliation still misses the wall clock by
+    more than its truncation-plus-latency budget (n_fail, RESID_FAIL_S) -- such
+    an interval cannot be a correctly unwrapped clean tag.  Know the structural
+    limit: rounding makes |residual| = |margin| * period <= period/2 IDENTICALLY,
+    so a "residual > half a rollover" test can never fire, and a wrap error that
+    stays within the wall-clock budget is undetectable per interval -- the
+    per-run drift band (eps_band_s) is the check with teeth there.
+  * All-zero header rows (a MIDAS event whose header bank was missing or
+    malformed -- the converter zero-fills them to keep row alignment) are
+    EXCLUDED from the recovery and their times filled from the wall clock alone
+    (recover_time_axis).  Left in, each one corrupts its two adjacent intervals
+    and permanently offsets every LATER event's time by up to half a rollover,
+    while dragging the frequency fit (measured: 0.1% missing headers -> -82 ppm
+    and ~9 s RMS error on the GOOD events).  Their count is reported
+    (n_ttt_missing).
 """
 
 from __future__ import annotations
@@ -60,6 +73,16 @@ logger = logging.getLogger("clock_recovery")
 # (= 15/16 x 125) is included because it is what the V1740-family tag on run00270
 # actually runs at; the measurement stands on its own regardless.
 NOMINAL_CLOCKS_MHZ = (62.5, 80.0, 100.0, 117.1875, 125.0, 200.0, 250.0, 500.0)
+
+# Wall-clock disagreement beyond which an interval counts as a FAILED wrap
+# decision (n_fail): the budget is the 1-s timestamp truncation plus readout
+# latency (occasional ~1.5-s stalls are normal -- see event_times --selftest),
+# so 3 s cannot be produced by a correctly unwrapped clean tag.  A corrupted
+# tag lands ~uniform within +/- half a rollover, so for run00270-like periods
+# (~9 s) this catches roughly a third of corrupt intervals; n_marginal and the
+# eps_band_s drift band cover the rest.  (|resid| <= period/2 holds by
+# construction -- see resolve_wraps -- so no threshold above that can ever fire.)
+RESID_FAIL_S = 3.0
 
 
 def choose_ttt_word(hdr: np.ndarray, word: int | None = None) -> int:
@@ -113,7 +136,13 @@ def resolve_wraps(d: np.ndarray, dw: np.ndarray, modulus: int, freq: float):
     """Per-interval rollover count from the wall clock: k = round((dw*f - d)/M).
     Returns resolved tick counts r = d + k*M, the residuals e = r/f - dw (s), and
     the wrap margins (distance of the estimate from the integer it was rounded to;
-    |margin| near 0.5 flags an ambiguous decision)."""
+    |margin| near 0.5 flags an ambiguous decision).
+
+    Identity worth knowing: e = -margin * (M/f), so rounding bounds |e| at half a
+    rollover NO MATTER whether k is the true wrap count -- the only way past that
+    bound is the k >= 0 clamp.  (The clamp itself cannot fire on clean data: with
+    a monotonic wall clock the estimate's error is bounded by ~1 s / period, far
+    from -0.5; when corrupt data does trip it, margin <= -0.5 flags it.)"""
     est = (dw * freq - d) / modulus
     k = np.maximum(np.round(est), 0.0)          # a negative wrap count is unphysical
     margin = est - k
@@ -200,7 +229,9 @@ def recover(ttt: np.ndarray, wall: np.ndarray, fmax_hz: float = 600e6,
 
     period = modulus / f
     n_marginal = int(np.sum(np.abs(margin) > 0.35))
-    n_fail = int(np.sum(np.abs(e) > 0.5 * period))
+    # |e| > half a rollover is unreachable by construction (e = -margin*period),
+    # so failure means "irreconcilable with the wall clock's error budget".
+    n_fail = int(np.sum(np.abs(e) > RESID_FAIL_S))
     lo, hi = np.percentile(eps, [2.5, 97.5])
     nominal = min(NOMINAL_CLOCKS_MHZ, key=lambda m: abs(m * 1e6 - f))
     ppm = (f - nominal * 1e6) / (nominal * 1e6) * 1e6
@@ -220,6 +251,14 @@ def recover(ttt: np.ndarray, wall: np.ndarray, fmax_hz: float = 600e6,
 # Converter-side helper
 # ---------------------------------------------------------------------------
 
+def valid_header_rows(hdr: np.ndarray) -> np.ndarray:
+    """True for rows whose header bank was actually present.  A missing/short
+    bank is zero-filled by the converters to keep row alignment, and an all-zero
+    row cannot be a real digitizer header (the event counter / TTT words are
+    nonzero mid-run) -- so the test is safe on both new and old conversions."""
+    return np.asarray(hdr).any(axis=1)
+
+
 TIME_REL_ATTRS = {
     "units": "seconds since the first event of the run",
     "resolution": "one TTT clock tick (see the ttt_freq_hz file attribute)",
@@ -235,6 +274,14 @@ def recover_time_axis(hdr: np.ndarray, wall: np.ndarray, ttt_word: int | None = 
     -> (t_rel, provenance-attribute dict), or (None, {}) if the recovery cannot be
     done on this file.
 
+    All-zero header rows (missing/short header bank, zero-filled at conversion)
+    are EXCLUDED from the recovery -- left in, each corrupts two intervals and
+    permanently offsets every later event's time by up to half a rollover while
+    dragging the frequency fit.  Those events' times are filled from the wall
+    clock instead (~1-s accuracy, vs tick accuracy elsewhere), which keeps
+    /event_time_rel_s row-aligned with /waveforms; their count is written as the
+    n_ttt_missing attribute.
+
     Deliberately NON-FATAL: a conversion must still succeed on a file whose header
     bank carries no usable time tag (or which is too short to pin the modulus down).
     The caller simply omits /event_time_rel_s in that case, and every consumer
@@ -245,22 +292,49 @@ def recover_time_axis(hdr: np.ndarray, wall: np.ndarray, ttt_word: int | None = 
         wall = np.asarray(wall, dtype=np.int64)
         if np.any(np.diff(wall) < 0):
             raise ValueError("wall clock is not monotonic")
-        word = choose_ttt_word(np.asarray(hdr, dtype=np.int64), ttt_word)
-        rec = recover(np.asarray(hdr, dtype=np.int64)[:, word], wall)
+        hdr = np.asarray(hdr, dtype=np.int64)
+        row_ok = valid_header_rows(hdr)
+        n_missing = int(hdr.shape[0] - row_ok.sum())
+        if n_missing:
+            logger.warning("%d of %d events have an all-zero header row (missing "
+                           "header bank at conversion); recovering the clock from "
+                           "the other %d and filling those events' times from the "
+                           "wall clock (1-s accuracy).", n_missing, hdr.shape[0],
+                           int(row_ok.sum()))
+            if int(row_ok.sum()) < 3:
+                raise ValueError("fewer than 3 events carry a header bank")
+        word = choose_ttt_word(hdr[row_ok], ttt_word)
+        rec = recover(hdr[row_ok, word], wall[row_ok])
     except Exception as exc:                    # noqa: BLE001 -- provenance is best-effort
         logger.warning("Trigger-time recovery skipped (%s); the file will carry no "
                        "/event_time_rel_s. Downstream time-axis analyses will need "
                        "timing_stability/event_times.py.", exc)
         return None, {}
 
+    t_rel = rec["t_rel"]
+    if n_missing:
+        # Place the missing-header events from the wall clock: t_rel tracks the
+        # wall to within its truncation/latency band with NO secular drift (the
+        # frequency is fitted against this same wall clock), so wall + the band's
+        # median offset is good to ~1 s -- fine for a time axis, and row
+        # alignment with /waveforms is preserved.
+        full = np.empty(hdr.shape[0], dtype=np.float64)
+        full[row_ok] = t_rel
+        anchor = wall[row_ok][0]
+        eps_med = float(np.median(t_rel - (wall[row_ok] - anchor)))
+        full[~row_ok] = (wall[~row_ok] - anchor) + eps_med
+        full -= full[0]        # keep the "seconds since the FIRST event" anchor
+        t_rel = full
+
     attrs = {"ttt_word": word, "ttt_modulus": rec["modulus"],
              "ttt_freq_hz": rec["freq_hz"], "ttt_rollover_s": rec["period_s"],
              "nominal_clock_mhz": rec["nominal_mhz"],
              "ppm_vs_nominal": rec["ppm_vs_nominal"],
              "n_wrap_marginal": rec["n_marginal"], "n_wrap_failed": rec["n_fail"],
+             "n_ttt_missing": n_missing,
              "resid_band_95_s": rec["eps_band_s"]}
     logger.info("Recovered trigger-time axis: %.6f MHz (%g MHz %+.1f ppm), %d rollovers, "
                 "%d failed wraps, span %.2f h.", rec["freq_hz"] / 1e6, rec["nominal_mhz"],
                 rec["ppm_vs_nominal"], rec["n_wraps_total"], rec["n_fail"],
-                rec["t_rel"][-1] / 3600.0)
-    return rec["t_rel"], attrs
+                t_rel[-1] / 3600.0)
+    return t_rel, attrs
