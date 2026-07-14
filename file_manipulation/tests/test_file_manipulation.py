@@ -53,6 +53,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import caen_to_h5 as caen            # noqa: E402
+import channel_diagnostics as cd     # noqa: E402
 import clock_recovery as cr          # noqa: E402
 import extract_channels as xc        # noqa: E402
 import midas_to_h5 as midas          # noqa: E402
@@ -418,6 +419,75 @@ def test_results_dir_and_compression_kwargs():
                                                     "shuffle": True}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------------
+# Channel diagnostics: the dead-channel test
+# ---------------------------------------------------------------------------------
+
+def test_disconnected_channel_with_edge_glitches_is_not_active():
+    """A disconnected channel must not masquerade as live on INCOHERENT spikes.
+
+    The run00270 failure this pins down.  A dead channel's noise sigma sits at the ADC
+    quantization floor (~1 LSB), so the sigma-relative trigger threshold is only a few ADC
+    and it "triggers" on ~8% of events; the trigger-rate gate alone therefore calls every
+    dead channel active, and the whole decision rests on the absolute pulse height.  Those
+    channels carry a ~68 ADC glitch at the END of the record, and the auto-window latches
+    onto exactly that -- so the height has to be measured in a way that can tell a pulse
+    from a glitch.
+
+    The discriminator is COHERENCE.  A real pulse lands at the same place every event and
+    so survives a median; the glitch's position is scattered over the last ~19 samples with
+    no single sample holding a majority, so the median pulse is only ~12 ADC even though
+    the per-event peaks reach ~68.  Measuring the height as the median of the per-EVENT
+    peaks (which is what this used to do) takes each event's own glitch at face value: it
+    read 39 and 65 ADC on the disconnected ch14 and ch20 and called them live.  (Only those
+    two of 21 dead channels tripped, because that statistic is a median over a bimodal
+    mixture -- glitch events vs noise events -- and it lurches from ~12 to ~68 once glitches
+    cross half the triggered set.  A knife-edge, which is the deeper reason to not use it.)
+
+    The window is pinned here rather than auto-derived: this is a test of the HEIGHT
+    estimator, and both channels' pulses are placed in the same window so one fixed window
+    serves both.
+    """
+    rng = np.random.default_rng(7)
+    n, L = 1000, 1024
+    lo, hi = 990, L
+    t = np.arange(L)
+    wf = np.zeros((n, 2, L), np.float32)
+
+    # ch0: a real detector -- COHERENT, the pulse lands at the same sample every event.
+    wf[:, 0, :] = 500.0 + rng.normal(0, 13, (n, L))
+    wf[:, 0, :] += (900 + rng.normal(0, 80, n))[:, None] \
+        * np.exp(-0.5 * ((t - 1005) / 6.0) ** 2)[None, :]
+
+    # ch1: DISCONNECTED -- quantization-floor noise, no pulse anywhere, plus a ~68 ADC
+    # glitch in 12% of events at a position scattered over the last ~29 samples
+    # (INCOHERENT: no sample holds a majority, so a median sees through it).
+    base = 2600.0 + rng.normal(0, 1.5, (n, L))
+    for ev in np.flatnonzero(rng.random(n) < 0.12):
+        base[ev, rng.integers(L - 29, L)] += rng.uniform(64, 72)
+    wf[:, 1, :] = np.round(base)
+
+    stats = cd.channel_stats(wf, lo, hi, noise_prominence=5.0, auto_window=False)
+    active = cd.active_channels(stats, dead_threshold=5.0, min_pulse_adc=20.0)
+    assert active == [0], f"expected only the coherent ch0 to be live, got {active}"
+
+    s1 = next(s for s in stats if s["channel"] == 1)
+    assert s1["trigger_rate"] * 100 >= 5.0, (
+        "test is not exercising the bug: the dead channel must CLEAR the trigger-rate gate "
+        f"on its glitches (got {100*s1['trigger_rate']:.1f}%), so that only the amplitude "
+        "gate can reject it")
+    assert s1["pulse_prom"] < 20.0, (
+        f"disconnected channel's COHERENT height is {s1['pulse_prom']:.1f} ADC, expected "
+        "well under the 20-ADC gate")
+
+    # ...and pin down that the OLD statistic really would have let it through, so this test
+    # cannot quietly stop testing anything if the estimator is ever changed back.
+    old = float(np.median(s1["peak_vals"][s1["triggered"]]) - s1["baseline"])
+    assert old >= 20.0, (
+        f"median-of-per-event-peaks is only {old:.1f} ADC here, so this synthetic channel "
+        "no longer reproduces the ch14/ch20 failure mode the test exists for")
 
 
 # ---------------------------------------------------------------------------------
