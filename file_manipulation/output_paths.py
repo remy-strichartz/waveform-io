@@ -98,6 +98,22 @@ def dataset_of(name: str | Path) -> str:
     return _CH_SUFFIX.sub("", stem)
 
 
+def dataset_group(stem: str | Path) -> str:
+    """The dataset a per-CHANNEL result belongs to: the stem up to its channel tag.
+
+        run00270_ch0  ->  run00270        caen_ch0        ->  caen
+        run00270_ch7_clean -> run00270    run00270        ->  run00270
+
+    Like dataset_of, but for RESULTS rather than waveform files, so it also strips a
+    channel tag that is not at the end: a cleaned export (run00270_ch7_clean) is still
+    channel 7 of run00270 and its report belongs with the rest of the run's.  Anything
+    with no channel tag names itself.
+    """
+    stem = Path(stem).stem
+    tag = re.search(r"_ch\d+(?:-\d+)*(?:_|$)", stem)
+    return stem[: tag.start()] if tag else stem
+
+
 def kind_dir(dataset_folder: str | Path, name: str | Path) -> Path:
     """The directory `name` belongs in: <dataset_folder>/<kind_of(name)>/."""
     return Path(dataset_folder) / kind_of(name)
@@ -299,10 +315,20 @@ def resolve_results_dir(script_file: str | Path, dataset_stem: str, *,
                         base: str | Path | None = None,
                         program: str | None = None,
                         group: str | None = None,
+                        shared: bool = False,
                         overwrite: bool = False) -> Path:
     """A per-run results directory:
 
         <base>[/<group>]/<dataset_stem>_<token>_results[_N]
+
+    With `shared`, the folder is keyed on the DATASET (dataset_group) instead of the input
+    file, so every channel of one run collects in ONE folder -- timewalk_report writes
+    energy_reconstruction_results/timewalk/run00270_timewalk_results/, holding one plot per
+    channel, rather than eleven folders of one plot each.  It is for programs whose whole
+    output for a channel is a single figure; such a program must then name that figure after
+    the channel, since the folder no longer does.  A shared folder is never _N versioned
+    (that would scatter one run's channels across folders) -- it accumulates, and re-running
+    a channel replaces that channel's files.
 
     `base` defaults to the program's "<pipeline>_results" folder (results_base); an
     explicit --output-dir relocates it.  `program` overrides the friendly token
@@ -331,9 +357,9 @@ def resolve_results_dir(script_file: str | Path, dataset_stem: str, *,
     else:
         base = Path(base)
     token = program_token(script_file) if program is None else program
-    name = f"{dataset_stem}_{token}_results"
+    name = f"{dataset_group(dataset_stem) if shared else dataset_stem}_{token}_results"
     candidate = base / name
-    if overwrite:
+    if shared or overwrite:
         return candidate
     i = 0
     while candidate.exists():

@@ -411,6 +411,20 @@ def test_results_dir_and_compression_kwargs():
         assert op.resolve_results_dir("mv_pipeline.py", "run1", base=tmp,
                                       overwrite=True) == first
 
+        # A SHARED folder is keyed on the dataset, not the file: every channel of a run
+        # -- including a cleaned export -- lands in the one folder, and it must NOT be
+        # _N versioned once it exists, or the run's channels would scatter across
+        # run1_timewalk_results, _1, _2, ... one plot each (which is the whole point).
+        shared = op.resolve_results_dir("timewalk_report.py", "run1_ch0", base=tmp,
+                                        shared=True)
+        assert shared == tmp / "run1_timewalk_results"
+        shared.mkdir(parents=True)
+        for stem in ("run1_ch1", "run1_ch7_clean"):
+            assert op.resolve_results_dir("timewalk_report.py", stem, base=tmp,
+                                          shared=True) == shared
+        assert op.resolve_results_dir("timewalk_report.py", "run2_ch0", base=tmp,
+                                      shared=True) == tmp / "run2_timewalk_results"
+
         assert op.compression_kwargs("none", 4) == {}
         assert op.compression_kwargs("lzf", 4) == {"compression": "lzf",
                                                    "shuffle": True}
