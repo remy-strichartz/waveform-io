@@ -264,19 +264,23 @@ def print_summary(stats: list[dict], active: list[int]) -> None:
 # Plots
 # ---------------------------------------------------------------------------
 
-def plot_overview(waveforms, stats, active, out_dir=None, show=True, save=False) -> None:
+def plot_overview(waveforms, stats, active, out_dir=None, show=True, save=False,
+                  dead_threshold: float = 5.0) -> None:
     """Single figure: trigger rate, noise sigma, median peak, median waveforms."""
     n_ch = len(stats)
     ch_ids = list(range(n_ch))
     fig, axes = plt.subplots(2, 2, figsize=(14, 8))
 
     # Trigger rate -- colored by the FULL activeness test (rate AND pulse amplitude),
-    # so a dead channel that clears 5% on noise alone still reads red, not green.
+    # so a dead channel that clears the rate on noise alone still reads red, not
+    # green.  The guide line is the ACTUAL --dead-threshold, so line and colors
+    # can never contradict each other.
     ax = axes[0, 0]
     active_set = set(active)
     colors = ["C2" if s["channel"] in active_set else "C3" for s in stats]
     ax.bar(ch_ids, [s["trigger_rate"] * 100 for s in stats], color=colors, alpha=0.85)
-    ax.axhline(5, ls="--", color="gray", lw=0.8, label="5% threshold")
+    ax.axhline(dead_threshold, ls="--", color="gray", lw=0.8,
+               label=f"{dead_threshold:g}% threshold")
     ax.set(xlabel="Channel", ylabel="Trigger rate (%)", title="Trigger rate per channel")
     ax.grid(True, axis="y", alpha=0.3); ax.legend()
 
@@ -527,7 +531,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--input", type=Path, required=True,
                    help="Source HDF5 file; a bare name is looked up in waveform_files/ "
-                        "(including its per-run folders).")
+                        "(its dataset folders and their kind subfolders).")
     p.add_argument("--auto-window", dest="auto_window", action="store_true", default=True,
                    help="Derive EACH channel's pulse window from its own data with the triage "
                         "recommend_window routine (ON by default; disable with --no-auto-window).")
@@ -606,7 +610,8 @@ def main() -> None:
     out_dir = resolve_results_dir(__file__, args.input.stem,
                                   base=args.output_dir, program="diagnostics") if save else None
 
-    plot_overview(waveforms, stats, active, out_dir, show, save)
+    plot_overview(waveforms, stats, active, out_dir, show, save,
+                  dead_threshold=args.dead_threshold)
     plot_peak_histograms(stats, active, out_dir, show, save, per_page=args.per_page)
     plot_window_diagnostics(stats, active, out_dir, show, save, per_page=args.per_page)
 

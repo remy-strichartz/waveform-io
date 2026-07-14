@@ -28,15 +28,18 @@ axis, so no downstream tool has to re-derive the clock (and no separate times fi
 fall out of row-alignment with the waveforms).  Files whose header bank holds no usable
 counter convert exactly as before, simply without that dataset.
 
-  Bank header (8 bytes, MIDAS "bank31" format used for >32-bit banks)
-    uint32  total_size         <- total bytes including this header
-    uint32  flags              <- bit1 = bank31 format
+  Bank list header (8 bytes)
+    uint32  data_size          <- bytes of bank data that follow
+    uint32  flags              <- bit0 = BANK_FORMAT_VERSION (set in EVERY file);
+                                  bit4 = BANK_FORMAT_32BIT (BANK32 headers);
+                                  bit5 = BANK_FORMAT_64BIT_ALIGNED (BANK32A)
 
-  Then a sequence of banks, each:
+  Then a sequence of banks, each (exactly as midas.h defines them):
     char[4] name
-    uint32  type
-    uint32  size               <- bytes of data (bank31)
-    bytes   data[size]         <- padded to 8-byte boundary
+    uint16/uint32  type        (uint16 for classic BANK, uint32 for BANK32/32A)
+    uint16/uint32  size        <- bytes of data
+    (uint32 reserved            BANK32A only, pads the header to 16 bytes)
+    bytes   data[size]         <- padded to an 8-byte boundary in every format
 
 Bank types used here:
   type 4  = uint16  (ADC waveform samples)
@@ -45,12 +48,15 @@ Bank types used here:
 Usage
 -----
     pip install h5py numpy          # only deps needed
-    python midas_to_h5.py --input run00270.mid          # -> waveform_files/run00270/run00270.h5
+    # -> waveform_files/run00270/multi_channel/run00270.h5
+    python midas_to_h5.py --input run00270.mid
     python midas_to_h5.py --input run00270.mid --n-channels 8 --n-samples 1024
     python midas_to_h5.py --input run00270.mid.gz       # gzip OK
 
-The converted file names the run: it lands in its own folder, waveform_files/<run>/, and
-every later product of that run (extracted channels, recovered time axes) lands beside it.
+The converted file names the run: it lands in the run's own folder, and every later
+product of that run (extracted channels, recovered time axes) lands in the same folder,
+each in the subfolder for its kind.  The .mid itself belongs in waveform_files/<run>/raw/,
+where a bare --input finds it; it is also accepted as a path from anywhere else.
 See file_manipulation/output_paths.py.
 """
 
@@ -66,7 +72,8 @@ import h5py
 import numpy as np
 
 from clock_recovery import TIME_REL_ATTRS, recover_time_axis
-from output_paths import resolve_output, run_dir
+from output_paths import (compression_kwargs, dataset_of, resolve_input,
+                          resolve_output, run_dir)
 
 logger = logging.getLogger("midas_to_h5")
 
@@ -76,9 +83,13 @@ logger = logging.getLogger("midas_to_h5")
 # ---------------------------------------------------------------------------
 
 EVENT_HEADER_SIZE   = 16        # bytes
-BANK_HEADER_SIZE    = 8         # bytes (standard + bank31 combined)
+BANK_HEADER_SIZE    = 8         # bytes (the bank LIST header: data_size + flags)
 BANK_NAME_SIZE      = 4         # bytes
-MIDAS_BANK31_FLAG   = 0x01      # flags bit indicating bank31 format
+# BANK_HEADER.flags bits, exactly as midas.h defines them.  Bit 0 is
+# BANK_FORMAT_VERSION and is set in EVERY file -- it says nothing about the
+# bank-header layout; only bits 4/5 select the format.
+MIDAS_BANK32_FLAG   = 0x10      # BANK_FORMAT_32BIT: 12-byte BANK32 headers
+MIDAS_BANK32A_FLAG  = 0x20      # BANK_FORMAT_64BIT_ALIGNED: 16-byte BANK32A headers
 MIDAS_SPECIAL_MIN   = 0x8000    # internal event IDs (BOR, EOR, messages) to skip
 
 
@@ -105,39 +116,37 @@ def _parse_event_header(raw: bytes) -> dict:
 
 
 def _parse_banks(payload: bytes) -> dict[str, bytes]:
-    """Parse the bank payload of one MIDAS event; return {name: raw_bytes}."""
+    """Parse the bank payload of one MIDAS event; return {name: raw_bytes}.
+
+    The bank-header layout is selected from the BANK_HEADER flags exactly as
+    midas.h defines them: BANK_FORMAT_32BIT (1<<4) means 12-byte BANK32 headers,
+    BANK_FORMAT_64BIT_ALIGNED (1<<5) 16-byte BANK32A headers (an extra reserved
+    word before the data), otherwise classic 8-byte 16-bit BANK headers.  Bit 0
+    is BANK_FORMAT_VERSION, set in every file -- testing it (as this parser once
+    did) selects the 12-byte layout unconditionally, which happens to be right
+    for BANK32 files but silently shifts every BANK32A waveform by the reserved
+    word and garbles classic 16-bit files."""
     if len(payload) < BANK_HEADER_SIZE:
         return {}
 
-    # Bank list header: total_size (uint32, unused) + flags (uint32)
+    # Bank list header: data_size (uint32, unused here) + flags (uint32)
     _, flags = struct.unpack_from("<II", payload, 0)
-    bank31 = bool(flags & MIDAS_BANK31_FLAG)
-    offset = BANK_HEADER_SIZE
+    if flags & MIDAS_BANK32A_FLAG:
+        hdr_size, size_fmt = 16, "<II"
+    elif flags & MIDAS_BANK32_FLAG:
+        hdr_size, size_fmt = 12, "<II"
+    else:
+        hdr_size, size_fmt = 8, "<HH"
 
     banks: dict[str, bytes] = {}
-    while offset < len(payload):
-        if bank31:
-            if offset + 12 > len(payload):
-                break
-            name = payload[offset:offset + 4].rstrip(b"\x00").decode("ascii", errors="replace")
-            btype, bsize = struct.unpack_from("<II", payload, offset + 4)
-            data_start = offset + 12
-        else:
-            if offset + 8 > len(payload):
-                break
-            name = payload[offset:offset + 4].rstrip(b"\x00").decode("ascii", errors="replace")
-            btype, bsize = struct.unpack_from("<HH", payload, offset + 4)
-            data_start = offset + 8
-
-        data_end = data_start + bsize
-        banks[name] = payload[data_start:data_end]
-
-        # Banks are padded to 8-byte boundary
-        padded = (bsize + 7) & ~7
-        if bank31:
-            offset += 12 + padded
-        else:
-            offset += 8 + padded
+    offset = BANK_HEADER_SIZE
+    while offset + hdr_size <= len(payload):
+        name = payload[offset:offset + 4].rstrip(b"\x00").decode("ascii", errors="replace")
+        _, bsize = struct.unpack_from(size_fmt, payload, offset + 4)
+        data_start = offset + hdr_size
+        banks[name] = payload[data_start:data_start + bsize]
+        # Bank data is padded to an 8-byte boundary in every format.
+        offset = data_start + ((bsize + 7) & ~7)
 
     return banks
 
@@ -145,18 +154,6 @@ def _parse_banks(payload: bytes) -> dict[str, bytes]:
 # ---------------------------------------------------------------------------
 # Converter
 # ---------------------------------------------------------------------------
-
-def _compression_kwargs(codec: str, level: int) -> dict:
-    """HDF5 dataset compression options.  gzip (level-tunable) is the portable
-    default; lzf is ~3-5x faster to write at a lower ratio (good for large runs);
-    none skips compression entirely (fastest, largest).  shuffle helps gzip/lzf
-    on low-entropy ADC data and is cheap, so it rides along with either codec."""
-    if codec == "none":
-        return {}
-    if codec == "lzf":
-        return {"compression": "lzf", "shuffle": True}
-    return {"compression": "gzip", "compression_opts": level, "shuffle": True}
-
 
 def convert(
     input_path: str,
@@ -174,7 +171,7 @@ def convert(
 
     expected_samples = n_channels * n_samples
     opener = gzip.open if input_path.endswith(".gz") else open
-    comp_kwargs = _compression_kwargs(compression, complevel)
+    comp_kwargs = compression_kwargs(compression, complevel)
 
     logger.info("Input  : %s", input_path)
     logger.info("Output : %s", output_path)
@@ -187,6 +184,7 @@ def convert(
     event_times:   list[int] = []      # MIDAS event-header unix timestamp (seconds)
     n_written  = 0
     n_skipped  = 0
+    n_bad_hdr  = 0            # events written with a MISSING/short header bank
     midas_index = 0           # counts ALL events in file (incl. special ones)
 
     # Chunk-aligned write buffers (allocated on the first valid event).
@@ -285,13 +283,18 @@ def convert(
                 hdr_buf = np.zeros((chunk_size, n_hdr_words), dtype=np.uint32)
 
             # Stage this event into the buffers.  The header row stays aligned with
-            # the waveform row; a missing/short header leaves that row zero-filled.
+            # the waveform row; a missing/short header leaves that row zero-filled
+            # AND counted -- the zero rows are excluded from the clock recovery
+            # (clock_recovery.valid_header_rows), where they would otherwise walk
+            # every later event's time off by up to half a rollover each.
             wf_buf[buf_i] = waveform
             hdr_buf[buf_i] = 0
-            if hdr_bank in banks:
-                raw_hdr_bank = np.frombuffer(banks[hdr_bank], dtype="<u4")
-                if raw_hdr_bank.size == n_hdr_words:
-                    hdr_buf[buf_i] = raw_hdr_bank
+            raw_hdr_bank = (np.frombuffer(banks[hdr_bank], dtype="<u4")
+                            if hdr_bank in banks else None)
+            if raw_hdr_bank is not None and raw_hdr_bank.size == n_hdr_words:
+                hdr_buf[buf_i] = raw_hdr_bank
+            else:
+                n_bad_hdr += 1
             buf_i += 1
 
             event_numbers.append(midas_index - 1)
@@ -342,12 +345,20 @@ def convert(
 
         h5.attrs["n_waveform_events"] = n_written
         h5.attrs["n_skipped_events"]  = n_skipped
+        h5.attrs["n_missing_headers"] = n_bad_hdr
+        if n_bad_hdr:
+            logger.warning("%d of %d written events had a missing/short %s bank "
+                           "(header row zero-filled; excluded from the trigger-time "
+                           "recovery, times filled from the wall clock).",
+                           n_bad_hdr, n_written, hdr_bank)
 
     print()
     print("=" * 52)
     print("Done.")
     print(f"Events written  : {n_written:,}")
     print(f"Events skipped  : {n_skipped:,}")
+    if n_bad_hdr:
+        print(f"Missing headers : {n_bad_hdr:,}  (see WARNING above)")
     print(f"Output          : {output_path}")
     print(f"Waveform shape  : ({n_written}, {n_channels}, {n_samples})")
     print("=" * 52)
@@ -362,11 +373,14 @@ def parse_args() -> argparse.Namespace:
         description="Convert a MIDAS .mid file to HDF5 (no midas package needed).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--input",   help="Input MIDAS file (.mid or .mid.gz)")
+    p.add_argument("--input",   required=True,
+                   help="Input MIDAS file (.mid or .mid.gz); a bare name is "
+                        "looked up in waveform_files/ (the run's raw/ folder).")
     p.add_argument("--output",   default=None,
                    help="Output HDF5 file. A bare name (or omitted) is written into the run's "
-                        "own folder, waveform_files/<run>/; give a path with a folder to "
-                        "override. Default name: <input-stem>.h5")
+                        "own folder, waveform_files/<run>/multi_channel/ (it carries every "
+                        "channel); give a path with a folder to override. "
+                        "Default name: <input-stem>.h5")
     p.add_argument("--n-channels",  type=int, default=32,
                    help="ADC channels per event.")
     p.add_argument("--n-samples",   type=int, default=1024,
@@ -397,13 +411,16 @@ def main() -> None:
     args = parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level),
                         format="%(levelname)s %(name)s: %(message)s")
-    # This conversion IS the run: it names the folder every later product lands in.
-    default_name = f"{Path(args.input).stem}.h5"
+    # A bare --input is looked up in the layout, where the .mid lives in the run's raw/.
+    input_path = resolve_input(args.input)
+    # This conversion IS the run: it names the folder every later product lands in
+    # (dataset_of, not .stem, so run00270.mid.gz still names the run00270 run).
+    default_name = f"{dataset_of(input_path)}.h5"
     name = Path(args.output).name if args.output else default_name
-    output = resolve_output(args.output, default_name, into=run_dir(stem=Path(name).stem))
+    output = resolve_output(args.output, default_name, into=run_dir(stem=dataset_of(name)))
     output.parent.mkdir(parents=True, exist_ok=True)
     convert(
-        input_path  = args.input,
+        input_path  = str(input_path),
         output_path = str(output),
         n_channels  = args.n_channels,
         n_samples   = args.n_samples,

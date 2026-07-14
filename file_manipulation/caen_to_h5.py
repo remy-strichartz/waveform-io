@@ -29,27 +29,30 @@ Notes / gotchas (specific to these files)
   (which would give event0, event1, event10, event100, ...).
 * ``config/RecordLength`` reports 1024 but the ACTUAL stored per-channel length
   is 1012.  The per-channel sample count is therefore DERIVED from the real data
-  (event length / channel count), never taken from ``RecordLength``.
+  (the MODAL event length / channel count -- modal, not the first event's, so one
+  malformed event cannot set the geometry), never taken from ``RecordLength``.
 * ``n_channels`` comes from ``config/ChannelList`` (falls back to 32) and is
   cross-checked: event_length must divide evenly by it, else the tool stops
   rather than silently mis-slicing the channels.
 
-The reformatted file names a RUN, so it lands in its own per-run folder,
-waveform_files/<run>/, and everything later derived from it (extracted channels, recovered
-time axes) lands beside it.  The output argument may be omitted or given as a bare name, or
-a path with a folder to write elsewhere.  See file_manipulation/output_paths.py.
+The reformatted file names a RUN, so it lands in that run's own folder, and everything
+later derived from it (extracted channels, recovered time axes) lands in the same folder,
+each in the subfolder for its kind.  The cube itself carries every channel, so it goes in
+multi_channel/.  The output argument may be omitted or given as a bare name, or a path with
+a folder to write elsewhere.  See file_manipulation/output_paths.py.
 
 Usage
 -----
-    python caen_to_h5.py --input caen.h5        # -> waveform_files/caen_reformatted/caen_reformatted.h5
+    # -> waveform_files/caen_reformatted/multi_channel/caen_reformatted.h5
+    python caen_to_h5.py --input caen.h5
     python caen_to_h5.py --input caen.h5 --max-events 200
     python caen_to_h5.py --input caen.h5 --output mycube.h5 --n-channels 32
-                                                # -> waveform_files/mycube/mycube.h5
+        # -> waveform_files/mycube/multi_channel/mycube.h5
 
-Then, e.g. (a bare name is looked up in waveform_files/ and its per-run folders):
+Then, e.g. (a bare name is looked up wherever the layout puts it):
     python file_manipulation/channel_diagnostics.py --input caen_reformatted.h5
     python file_manipulation/extract_channels.py --input caen_reformatted.h5 --channels 1 8
-        # -> waveform_files/caen_reformatted/caen_reformatted_ch1-8.h5
+        # -> waveform_files/caen_reformatted/multi_channel/caen_reformatted_ch1-8.h5
 """
 
 from __future__ import annotations
@@ -62,23 +65,13 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from output_paths import resolve_output, run_dir
+from output_paths import (compression_kwargs, dataset_of, resolve_input,
+                          resolve_output, run_dir)
 
 logger = logging.getLogger("caen_to_h5")
 
 CHUNK_EVENTS = 200          # events per write block (bounds peak memory)
 _EVENT_RE = re.compile(r"(\d+)")
-
-
-def _compression_kwargs(codec: str, level: int) -> dict:
-    """HDF5 dataset compression options (mirrors midas_to_h5).  gzip: best ratio
-    (default).  lzf: ~3-5x faster writes, larger files (good for big runs).
-    none: fastest, largest.  shuffle rides along with gzip/lzf on ADC data."""
-    if codec == "none":
-        return {}
-    if codec == "lzf":
-        return {"compression": "lzf", "shuffle": True}
-    return {"compression": "gzip", "compression_opts": level, "shuffle": True}
 
 
 # ---------------------------------------------------------------------------
@@ -121,16 +114,20 @@ def find_events_group(f: h5py.File, events_group: str | None) -> h5py.Group:
     return f[best_name]
 
 
-def infer_geometry(f: h5py.File, group: h5py.Group, event_names: list[str],
+def infer_geometry(f: h5py.File, event_len: int,
                    n_channels_override: int | None) -> tuple[int, int]:
-    """Return (n_channels, n_samples) for the flattened events.
+    """Return (n_channels, n_samples) for flattened events of length `event_len`.
+
+    The caller passes the MODAL event length, not the first event's: anchored to
+    event 0, a malformed FIRST event whose length happens to divide by n_channels
+    would set the geometry and invert the good/bad classification for the whole
+    file (skip would then keep ONLY the bad event; pad would truncate and scramble
+    every good one).
 
     n_channels: --n-channels override, else len(config/ChannelList), else 32.
-    n_samples : DERIVED from the real event length / n_channels (never from
-    RecordLength, which is wrong for these files).  Errors out if the flattened
-    length is not an exact multiple of n_channels."""
-    event_len = int(group[event_names[0]].shape[0])
-
+    n_samples : DERIVED from event_len / n_channels (never from RecordLength,
+    which is wrong for these files).  Errors out if the flattened length is not
+    an exact multiple of n_channels."""
     if n_channels_override is not None:
         n_ch = n_channels_override
         source = "--n-channels"
@@ -183,7 +180,7 @@ def convert(input_path: str, output_path: str, n_channels_override: int | None,
             chunk_events: int = CHUNK_EVENTS,
             compression: str = "gzip", complevel: int = 4) -> None:
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    comp_kwargs = _compression_kwargs(compression, complevel)
+    comp_kwargs = compression_kwargs(compression, complevel)
     with h5py.File(input_path, "r") as src:
         group = find_events_group(src, events_group)
 
@@ -196,14 +193,18 @@ def convert(input_path: str, output_path: str, n_channels_override: int | None,
             event_names = event_names[:max_events]
         n_events = len(event_names)
 
-        n_ch, n_samples = infer_geometry(src, group, event_names, n_channels_override)
-        expected_len = n_ch * n_samples
-        dtype = group[event_names[0]].dtype
-
         # Pre-scan every event's length (cheap -- reads dataset shape metadata,
         # not the samples) so bad events are handled BEFORE we write anything,
-        # rather than silently coerced mid-stream.
+        # rather than silently coerced mid-stream.  Geometry and dtype anchor to
+        # the MODAL length, not event 0's (see infer_geometry).
         lengths = np.array([int(group[nm].shape[0]) for nm in event_names], dtype=np.int64)
+        vals, counts = np.unique(lengths, return_counts=True)
+        modal_len = int(vals[np.argmax(counts)])
+
+        n_ch, n_samples = infer_geometry(src, modal_len, n_channels_override)
+        expected_len = n_ch * n_samples
+        dtype = group[event_names[int(np.argmax(lengths == modal_len))]].dtype
+
         bad_mask = lengths != expected_len
         bad_idx = np.nonzero(bad_mask)[0]
 
@@ -315,12 +316,14 @@ def parse_args() -> argparse.Namespace:
                     "pipeline expects.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--input",  help="Input CAEN HDF5 file (e.g. caen.h5).")
+    p.add_argument("--input",  required=True,
+                   help="Input CAEN HDF5 file (e.g. caen.h5); a bare name is "
+                        "looked up in waveform_files/.")
     p.add_argument("--output", nargs="?", default=None,
                    help="Output HDF5 file with a /waveforms cube. A bare name (or omitted) is "
-                        "written into its own per-run folder, waveform_files/<output-stem>/; "
-                        "give a path with a folder to override. "
-                        "Default name: <input-stem>_reformatted.h5")
+                        "written into its own run folder, waveform_files/<output-stem>/"
+                        "multi_channel/ (it carries every channel); give a path with a folder "
+                        "to override. Default name: <input-stem>_reformatted.h5")
     p.add_argument("--n-channels", type=int, default=None,
                    help="Force the channel count. Default: len(config/ChannelList), else 32.")
     p.add_argument("--max-events", type=int, default=None,
@@ -347,15 +350,18 @@ def main() -> None:
     args = parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level),
                         format="%(levelname)s %(name)s: %(message)s")
+    # A bare --input is looked up in the layout (a vendor file kept in a run's raw/), but
+    # it is just as likely to be a path to wherever the CAEN DAQ dropped it.
+    input_path = resolve_input(args.input)
     # This file IS the run everything downstream is extracted from, so it names the run
-    # folder: waveform_files/<output-stem>/<output-stem>.h5, with its channels and time
-    # axes landing beside it later.
-    default_name = f"{Path(args.input).stem}_reformatted.h5"
+    # folder: waveform_files/<output-stem>/multi_channel/<output-stem>.h5, with its
+    # channels and time axes landing in that run's other subfolders later.
+    default_name = f"{dataset_of(input_path)}_reformatted.h5"
     name = Path(args.output).name if args.output else default_name
-    output = resolve_output(args.output, default_name, into=run_dir(stem=Path(name).stem))
+    output = resolve_output(args.output, default_name, into=run_dir(stem=dataset_of(name)))
     output.parent.mkdir(parents=True, exist_ok=True)
     convert(
-        input_path         = args.input,
+        input_path         = str(input_path),
         output_path        = str(output),
         n_channels_override = args.n_channels,
         max_events         = args.max_events,

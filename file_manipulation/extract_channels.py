@@ -18,18 +18,19 @@ Output shape:
   Multiple channels -> waveforms (N, n_ch, L) -- 3D
 
 Extracted channels belong to the run they came from, so they are written into THAT run's
-folder, beside their source: waveform_files/<run>/.  --output may be omitted or given as a
-bare name; pass a path with a folder to write elsewhere.  A bare --input is looked up in
-waveform_files/ and its per-run folders.  See file_manipulation/output_paths.py.
+folder, waveform_files/<run>/ -- in channels/ when ONE channel was asked for (the 2D file
+the analysis pipeline reads) and in multi_channel/ when several were.  --output may be
+omitted or given as a bare name; pass a path with a folder to write elsewhere.  A bare
+--input is looked up in waveform_files/.  See file_manipulation/output_paths.py.
 
 Usage
 -----
     python extract_channels.py --input run00270.h5 --channels 0 1 2 3 4 5 6 7
-        # -> waveform_files/run00270/run00270_ch0-1-2-3-4-5-6-7.h5
+        # -> waveform_files/run00270/multi_channel/run00270_ch0-1-2-3-4-5-6-7.h5
     python extract_channels.py --input run00270.h5 --channels 0
-        # -> waveform_files/run00270/run00270_ch0.h5
+        # -> waveform_files/run00270/channels/run00270_ch0.h5
     python extract_channels.py --input run00270.h5 --output my.h5 --channels 0
-        # -> waveform_files/run00270/my.h5
+        # -> waveform_files/run00270/channels/my.h5   (one channel, whatever it is called)
 """
 
 from __future__ import annotations
@@ -42,27 +43,17 @@ import h5py
 import numpy as np
 
 from clock_recovery import TIME_REL_ATTRS, recover_time_axis
-from output_paths import resolve_input, resolve_output, run_dir
+from output_paths import (CHANNELS, MULTI_CHANNEL, compression_kwargs,
+                          resolve_input, resolve_output, run_dir)
 
 logger = logging.getLogger("extract_channels")
 
 CHUNK_EVENTS = 1000
 
 
-def _compression_kwargs(codec: str, level: int) -> dict:
-    """HDF5 dataset compression options (mirrors the converters).  gzip: best
-    ratio (default).  lzf: ~3-5x faster writes, larger files.  none: fastest.
-    Only applied to numeric datasets; fixed-length string datasets stay raw."""
-    if codec == "none":
-        return {}
-    if codec == "lzf":
-        return {"compression": "lzf", "shuffle": True}
-    return {"compression": "gzip", "compression_opts": level, "shuffle": True}
-
-
 def extract(input_path: str, output_path: str, channels: list[int],
             compression: str = "gzip", complevel: int = 4) -> None:
-    comp_kwargs = _compression_kwargs(compression, complevel)
+    comp_kwargs = compression_kwargs(compression, complevel)
     ch = np.array(channels, dtype=np.int64)
     single = len(ch) == 1
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -112,13 +103,17 @@ def extract(input_path: str, output_path: str, channels: list[int],
             # Attrs matter for the time axis: event_time_unix carries its units /
             # resolution / description here, and downstream (timing_stability,
             # triaged subsets) expects them to travel with the dataset.
-            skip = {"waveforms"}
+            # selected_source_channels is NOT copied: it is re-derived below (a
+            # verbatim copy would collide with that write, and its indices would
+            # be the SOURCE's, not this extraction's).
+            skip = {"waveforms", "selected_source_channels"}
             for name, ds in src.items():
                 if name in skip or not isinstance(ds, h5py.Dataset):
                     continue
-                # Fixed-length string datasets (dtype kind 'U') can't take the
-                # shuffle filter, so they are always written raw.
-                ds_kwargs = comp_kwargs if ds.dtype.kind != "U" else {}
+                # String datasets (h5py returns kind 'S' fixed-length or 'O'
+                # vlen; 'U' never comes back from HDF5) stay uncompressed --
+                # they are tiny and vlen data gains nothing from the codec.
+                ds_kwargs = comp_kwargs if ds.dtype.kind not in ("S", "O", "U") else {}
                 new_ds = dst.create_dataset(name, data=ds[()], **ds_kwargs)
                 for ak, av in ds.attrs.items():
                     new_ds.attrs[ak] = av
@@ -144,7 +139,16 @@ def extract(input_path: str, output_path: str, channels: list[int],
                             dst.attrs[ak] = av
 
             # --- record which channels were extracted ---
-            dst.create_dataset("selected_source_channels", data=ch)
+            # In the coordinates of the ORIGINAL whole-run file, through a CHAIN
+            # of extractions: extracting index 1 of run00270_ch0-5-9.h5 records
+            # original channel 5, not 1.  (extracted_channels below keeps the
+            # indices into the immediate source.)
+            if "selected_source_channels" in src:
+                original = np.asarray(src["selected_source_channels"][()],
+                                      dtype=np.int64)[ch]
+            else:
+                original = ch
+            dst.create_dataset("selected_source_channels", data=original)
 
             # --- copy + update attributes ---
             for k, v in src.attrs.items():
@@ -152,6 +156,9 @@ def extract(input_path: str, output_path: str, channels: list[int],
             dst.attrs["source_h5"]              = str(input_path)
             dst.attrs["source_waveforms_shape"] = wf.shape
             dst.attrs["extracted_channels"]     = ch
+            # The copied source attrs describe the SOURCE's geometry; correct the
+            # channel count to this file's own (the shapes already say so).
+            dst.attrs["n_channels"] = 1 if single else len(ch)
             dst.attrs["layout"] = (
                 "waveforms[event, sample]" if single
                 else "waveforms[event, selected_channel, sample]"
@@ -166,11 +173,12 @@ def parse_args() -> argparse.Namespace:
                                 formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument("--input",    required=True,
                    help="Source HDF5 file; a bare name is looked up in waveform_files/ "
-                        "(including its per-run folders).")
+                        "(its dataset folders and their kind subfolders).")
     p.add_argument("--output",   default=None,
                    help="Destination HDF5 file. A bare name (or no --output) is written into "
-                        "the source's per-run folder, waveform_files/<run>/; give a path with "
-                        "a folder to override. Default name: <input-stem>_ch<channels>.h5")
+                        "the source's run folder, waveform_files/<run>/channels/ for one "
+                        "channel or /multi_channel/ for several; give a path with a folder to "
+                        "override. Default name: <input-stem>_ch<channels>.h5")
     p.add_argument("--channels", required=True,  nargs="+", type=int,
                    help="Channel indices to extract, e.g. --channels 0 1 2 3")
     p.add_argument("--compression", choices=["gzip", "lzf", "none"], default="gzip",
@@ -189,9 +197,13 @@ def main() -> None:
     input_path = resolve_input(args.input)
     default_name = (f"{input_path.stem}_ch"
                     f"{'-'.join(str(c) for c in args.channels)}.h5")
-    # The channels belong to the run they came from, so they go in ITS folder -- beside the
-    # whole-run file when it already lives in one, otherwise in a folder made for it.
-    output_path = resolve_output(args.output, default_name, into=run_dir(input_path))
+    # The channels belong to the run they came from, so they go in ITS folder -- the one
+    # holding the whole-run file they were cut from, otherwise a folder made for it.  ONE
+    # channel is a channels/ file and several are a multi_channel/ one; say so outright
+    # rather than leave it to the name, which --output is free to override.
+    kind = CHANNELS if len(args.channels) == 1 else MULTI_CHANNEL
+    output_path = resolve_output(args.output, default_name,
+                                 into=run_dir(input_path), kind=kind)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     extract(str(input_path), str(output_path), args.channels,
             compression=args.compression, complevel=args.complevel)
