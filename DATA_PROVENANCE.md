@@ -30,17 +30,13 @@ of it against the sha256 above before trusting results built on it:
 Get-FileHash run00270.mid -Algorithm SHA256
 ```
 
-## Backup status — ACTION REQUIRED
+## Backup status
 
-As of 2026-07-14 the only known copies are:
+The authoritative copy lives on **lab storage** (confirmed 2026-07-14); the working copy on
+this laptop is a convenience duplicate, and the sha256 above is what proves the two agree.
 
-1. this laptop (`waveform_files/run00270/midas/run00270.mid`), and
-2. the Google Drive attachment in the 18 Jun 2026 email, **which expires 22 Jul 2026**.
-
-After that date, copy (1) is the last one, on a single un-backed-up disk. Before then, either
-save the Drive attachment into permanent storage (Yale Box / Google Drive), or confirm with
-the lab that the lab DAQ machine holds the authoritative copy — which it most likely does,
-and which would make this a non-issue.
+The Google Drive attachment from the 18 Jun 2026 email expired 22 Jul 2026 and is not a
+backup — do not treat that thread as a source. Re-fetch from lab storage and check the hash.
 
 ## Also from that thread
 
