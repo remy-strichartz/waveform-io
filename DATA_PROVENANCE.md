@@ -13,7 +13,7 @@ from and how to prove a future copy is the same file, since everything in
 | sha256 | `441a567d6eeb3929a4bfa2bb36505121e00cc52e839c50f2b556bd00f82afccc` |
 | source | Yale muon-veto test stand; file provided by the lab |
 | received | 18 Jun 2026 |
-| contents | ~50 h run; scintillator panels on SiPMs + PMTs, hodoscope coincidence trigger |
+| contents | ~50 h run; CUPID muon-veto prototype panel (arXiv:2505.06129, 8 SiPM mini-modules = ch0–ch7) between small PMT trigger paddles (ch9/ch10), hodoscope coincidence trigger |
 
 Everything else under `waveform_files/run00270/` — the multi-channel HDF5, the per-channel
 files, the time axes — is **derived** and regenerable:
