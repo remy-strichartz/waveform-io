@@ -671,7 +671,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--per-page",        type=int,   default=9,
                    help="Max per-channel panels per page in the multi-panel plots (peak "
                         "histograms / window diagnostics / noise floor); browse pages with the "
-                        "← → (or n/p) keys, Esc/Q to close. Window diagnostics show ~half as many "
+                        "left/right arrow (or n/p) keys, Esc/Q to close. Window diagnostics show "
+                        "~half as many "
                         "channels per page since each channel spans two plots.")
     p.add_argument("--max-events",      type=int,   default=DEFAULT_MAX_EVENTS,
                    help="Load at most this many events (evenly spaced across the run) to "
