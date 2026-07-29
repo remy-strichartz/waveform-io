@@ -250,8 +250,13 @@ def convert(
                 n_skipped += 1
                 continue
 
-            # Decode waveform samples (uint16)
-            raw = np.frombuffer(banks[dig_bank], dtype="<u2")
+            # Decode waveform samples (uint16).  A corrupt bank need not hold a whole
+            # number of words -- frombuffer would raise on it and kill the whole
+            # conversion mid-file.  Truncate to whole words instead: the size check
+            # below then skips-and-counts it like any other wrong-size bank, which is
+            # the behaviour the receipt already documents.
+            dig = banks[dig_bank]
+            raw = np.frombuffer(dig[: len(dig) - (len(dig) % 2)], dtype="<u2")
             if raw.size != expected_samples:
                 logger.warning("Skip midas event %d: %s has %d samples, expected %d.",
                                midas_index, dig_bank, raw.size, expected_samples)
@@ -293,8 +298,11 @@ def convert(
             # every later event's time off by up to half a rollover each.
             wf_buf[buf_i] = waveform
             hdr_buf[buf_i] = 0
-            raw_hdr_bank = (np.frombuffer(banks[hdr_bank], dtype="<u4")
-                            if hdr_bank in banks else None)
+            # Same whole-word truncation as the waveform bank above: a torn header
+            # bank must land in the zero-fill-and-count path, not raise.
+            hb = banks.get(hdr_bank)
+            raw_hdr_bank = (np.frombuffer(hb[: len(hb) - (len(hb) % 4)], dtype="<u4")
+                            if hb is not None else None)
             if raw_hdr_bank is not None and raw_hdr_bank.size == n_hdr_words:
                 hdr_buf[buf_i] = raw_hdr_bank
             else:

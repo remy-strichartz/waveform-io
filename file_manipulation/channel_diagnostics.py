@@ -350,8 +350,12 @@ def plot_overview(waveforms, stats, active, out_dir=None, show=True, save=False,
 
     # Median waveforms -- ACTIVE channels only (same set used everywhere else), so a
     # file full of disconnected channels doesn't overprint 30+ colors here.  Median
-    # over ALL events (not just triggered) so the true pulse shape, including negative
-    # (PMT) polarity, is visible.
+    # over ALL events (not just triggered): cheap, argmax-free, and it keeps negative
+    # (PMT) polarity visible -- but know what it shows: on a channel that pulses in
+    # under ~half its events the all-event median converges toward baseline, so the
+    # drawn pulse UNDERSTATES the real one (run00270 ch4: 108 ADC drawn vs 774 real,
+    # 7x).  This panel is a shape/pointing check; the amplitude bar beside it (from
+    # the real-pulse median) is the height to read.
     #
     # tab20 (not tab10) and a linestyle that changes every 20 channels: with tab10 the
     # color repeated at channel 10, so on run00270 -- which has exactly 11 active

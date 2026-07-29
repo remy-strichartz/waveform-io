@@ -88,9 +88,19 @@ RESID_FAIL_S = 3.0
 def choose_ttt_word(hdr: np.ndarray, word: int | None = None) -> int:
     """Pick the header word holding the trigger time tag.  A time counter is
     (a) different in (almost) every event and (b) bounded by a power of two it
-    nearly reaches.  Candidates are logged so the choice is auditable; a wrong
-    pick cannot survive anyway -- coarse_frequency_scan fails loudly on a word
-    that is not a consistent clock."""
+    nearly reaches.  Candidates are logged so the choice is auditable.
+
+    A wrong pick is caught downstream, but know WHICH guard does it: for a
+    LARGE-modulus word, coarse_frequency_scan fails loudly (no trial frequency
+    reconciles the wraps with the wall clock).  For a SMALL-modulus word -- e.g.
+    a per-event counter whose max+1 happens to be a power of two -- that scan is
+    structurally blind: the residual is bounded at period/2 identically, which
+    for a fast-wrapping word is milliseconds at EVERY trial frequency, so the
+    scan would 'succeed' and hand back the wall clock dressed up as fine time.
+    recover()'s rollover-period validity check is what rejects those (the wrap
+    method needs period/2 well above the wall clock's error budget), and the
+    grid guard in coarse_frequency_scan refuses to even start the pathological
+    scan such a word implies."""
     n, n_words = hdr.shape
     if word is not None:
         logger.info("TTT word %d set explicitly.", word)
@@ -167,6 +177,17 @@ def coarse_frequency_scan(d: np.ndarray, dw: np.ndarray, modulus: int,
         raise ValueError("Too few short inter-event gaps for the frequency scan.")
     ds_, dws_ = d[sel], dw[sel]
     step = 0.05 * modulus / cap_s               # ~10 grid points across the basin
+    # GRID GUARD.  The step scales with the modulus, so a small-modulus word (a
+    # per-event counter, not a time tag) implies a grid of 1e7+ points -- hours of
+    # scanning that could only end in the period-validity rejection below anyway
+    # (see recover).  A genuine TTT (2^24 and up) needs a few hundred to a few
+    # tens of thousands of points, so the ceiling is far from any legitimate scan.
+    n_grid = (fmax_hz - 1e6) / step
+    if n_grid > 2e6:
+        raise ValueError(
+            f"Frequency scan would need {n_grid:.2g} grid points: modulus {modulus} "
+            "wraps far too fast for wall-clock wrap resolution -- this header word "
+            "is not a usable trigger time counter.")
     freqs = np.arange(1e6, fmax_hz, step)
     fom = np.empty(freqs.size)
     for i, f in enumerate(freqs):
@@ -228,6 +249,19 @@ def recover(ttt: np.ndarray, wall: np.ndarray, fmax_hz: float = 600e6,
     eps = t_rel - w                                       # fine time minus wall (s)
 
     period = modulus / f
+    # METHOD VALIDITY.  The wall clock can only fix wrap counts when its error
+    # budget sits well under half a rollover (module docstring).  A word whose
+    # recovered period fails that had no wrap-resolving power at ANY trial
+    # frequency -- the residual is bounded at period/2 identically, so the coarse
+    # scan could not have rejected it, and the "fine time" here would be the 1-s
+    # wall clock in disguise with every QA counter reading clean.  This is the
+    # loud failure the choose_ttt_word docstring promises.
+    if period < 2.0 * RESID_FAIL_S:
+        raise ValueError(
+            f"Recovered rollover period {period:.3g} s is inside the wall clock's "
+            f"error budget (~{RESID_FAIL_S:.0f} s): wrap decisions carry no "
+            "information at this period, so the chosen header word is not a usable "
+            "trigger time counter.")
     n_marginal = int(np.sum(np.abs(margin) > 0.35))
     # |e| > half a rollover is unreachable by construction (e = -margin*period),
     # so failure means "irreconcilable with the wall clock's error budget".
