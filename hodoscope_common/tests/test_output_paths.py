@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Regression tests for the waveform-file layout (file_manipulation/output_paths.py).
+Regression tests for the waveform-file layout (common/output_paths.py).
 
 The layout is a CONTRACT between programs that never call each other: the converters
 write into waveform_files/<run>/<kind>/, and the analyzers -- given only a bare filename
@@ -38,9 +38,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))  # repo root
 
-import output_paths as P  # noqa: E402
+from common import output_paths as P  # noqa: E402
 
 RUN = "run00270"
 

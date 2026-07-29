@@ -26,8 +26,11 @@ worth committing to the slow per-channel pipelines.
 | `extract_channels.py` | multi-channel file -> one file per channel |
 | `clock_recovery.py` | TTT -> seconds; writes `/event_time_rel_s` at conversion |
 | `organize_waveforms.py` | files -> `waveform_files/<dataset>/{raw,multi_channel,channels,times}/` |
-| `output_paths.py` | shared input lookup + `<pipeline>_results/` conventions |
 | `channel_diagnostics.py` | **the diagnostic surface** (below) |
+
+The input lookup and `<pipeline>_results/` conventions this package writes by live in
+[`common/output_paths.py`](../common/output_paths.py) — every package resolves paths
+through the same module, so converters and analyzers agree on locations by construction.
 
 The converters and utilities only log progress and print a short end-of-run receipt
 (events written/skipped, output path, waveform shape; `clock_recovery` adds one line with
@@ -119,5 +122,5 @@ A bare filename is resolved inside `waveform_files/` — no path needed.
 
 ```bash
 python tests/test_file_manipulation.py
-python tests/test_output_paths.py
+python ../common/tests/test_output_paths.py   # the path conventions this package writes by
 ```

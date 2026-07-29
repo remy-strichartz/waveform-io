@@ -57,7 +57,7 @@ The converted file names the run: it lands in the run's own folder, and every la
 product of that run (extracted channels, recovered time axes) lands in the same folder,
 each in the subfolder for its kind.  The .mid itself belongs in waveform_files/<run>/raw/,
 where a bare --input finds it; it is also accepted as a path from anywhere else.
-See file_manipulation/output_paths.py.
+See common/output_paths.py.
 """
 
 from __future__ import annotations
@@ -66,14 +66,18 @@ import argparse
 import gzip
 import logging
 import struct
+import sys
 from pathlib import Path
 
 import h5py
 import numpy as np
 
-from clock_recovery import TIME_REL_ATTRS, recover_time_axis
-from output_paths import (compression_kwargs, dataset_of, resolve_input,
-                          resolve_output, run_dir)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # repo root (see README)
+
+from common.output_paths import (compression_kwargs, dataset_of,  # noqa: E402
+                                 resolve_input, resolve_output, run_dir)
+from file_manipulation.clock_recovery import (TIME_REL_ATTRS,  # noqa: E402
+                                              recover_time_axis)
 
 logger = logging.getLogger("midas_to_h5")
 

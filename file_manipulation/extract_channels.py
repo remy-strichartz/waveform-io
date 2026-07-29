@@ -21,7 +21,7 @@ Extracted channels belong to the run they came from, so they are written into TH
 folder, waveform_files/<run>/ -- in channels/ when ONE channel was asked for (the 2D file
 the analysis pipeline reads) and in multi_channel/ when several were.  --output may be
 omitted or given as a bare name; pass a path with a folder to write elsewhere.  A bare
---input is looked up in waveform_files/.  See file_manipulation/output_paths.py.
+--input is looked up in waveform_files/.  See common/output_paths.py.
 
 Usage
 -----
@@ -37,14 +37,19 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 
 import h5py
 import numpy as np
 
-from clock_recovery import TIME_REL_ATTRS, recover_time_axis
-from output_paths import (CHANNELS, MULTI_CHANNEL, compression_kwargs,
-                          resolve_input, resolve_output, run_dir)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # repo root (see README)
+
+from common.output_paths import (CHANNELS, MULTI_CHANNEL,  # noqa: E402
+                                 compression_kwargs, resolve_input,
+                                 resolve_output, run_dir)
+from file_manipulation.clock_recovery import (TIME_REL_ATTRS,  # noqa: E402
+                                              recover_time_axis)
 
 logger = logging.getLogger("extract_channels")
 

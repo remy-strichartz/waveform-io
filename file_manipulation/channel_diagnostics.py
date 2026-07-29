@@ -53,15 +53,14 @@ import numpy as np
 # when the figures are only going to be saved.  Same discipline as waveform_triage /
 # pulse_window.
 #
-# Reuse the triage channel preparation (wt.prepare_channel: polarity vote,
-# auto-window, refined baseline) so every number this tool prints is EXACTLY what
-# waveform_triage / hodoscope_efficiency would compute (one source of truth).
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_PROJECT_ROOT / "preprocessing"))
-import waveform_triage as wt                    # noqa: E402
-from plotting import paged_figure, setup_mpl    # noqa: E402
-# Shared per-run results-folder convention (output_paths lives in this directory).
-from output_paths import resolve_input, resolve_results_dir  # noqa: E402
+# Reuse the shared channel preparation (prepare_channel: polarity vote, auto-window,
+# refined baseline) so every number this tool prints is EXACTLY what waveform_triage /
+# hodoscope_efficiency would compute (one source of truth).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # repo root (see README)
+
+from common.output_paths import resolve_input, resolve_results_dir  # noqa: E402
+from common.plotting import paged_figure, setup_mpl                 # noqa: E402
+from common.waveform_ops import prepare_channel                     # noqa: E402
 
 logger = logging.getLogger("channel_diagnostics")
 
@@ -181,7 +180,7 @@ def channel_stats(waveforms: np.ndarray, pulse_lo: int, pulse_hi: int,
     `polarity` is "positive", "negative", or "auto" (detect each channel
     independently -- the right default for mixed SiPM + PMT files).
 
-    Each channel runs through wt.prepare_channel -- the SAME rough->refine recipe
+    Each channel runs through prepare_channel -- the SAME rough->refine recipe
     (provisional baseline, polarity vote + orient, per-channel auto-window, refined
     baseline) that triage and hodoscope_efficiency use, so every number here matches
     theirs by construction.  `[pulse_lo, pulse_hi]` is only the fallback when a
@@ -197,8 +196,8 @@ def channel_stats(waveforms: np.ndarray, pulse_lo: int, pulse_hi: int,
         # prepare_channel reject it outright (this is a diagnostics tool).
         lo0 = min(max(pulse_lo, 5), L - 1)
         hi0 = min(max(pulse_hi, lo0 + 1), L)
-        prep = wt.prepare_channel(ch_wf, polarity, lo0, hi0, auto_window=auto_window,
-                                  coverage=coverage, min_sigma=window_min_sigma, pad=pad)
+        prep = prepare_channel(ch_wf, polarity, lo0, hi0, auto_window=auto_window,
+                               coverage=coverage, min_sigma=window_min_sigma, pad=pad)
         oriented, baseline, sigma = prep.oriented, prep.baseline, prep.sigma
         lo, hi, ch_pol = prep.pulse_lo, prep.pulse_hi, prep.polarity
 

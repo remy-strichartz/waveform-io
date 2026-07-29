@@ -50,14 +50,14 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))  # repo root
 
-import caen_to_h5 as caen            # noqa: E402
-import channel_diagnostics as cd     # noqa: E402
-import clock_recovery as cr          # noqa: E402
-import extract_channels as xc        # noqa: E402
-import midas_to_h5 as midas          # noqa: E402
-import output_paths as op            # noqa: E402
+from common import output_paths as op                       # noqa: E402
+from file_manipulation import caen_to_h5 as caen            # noqa: E402
+from file_manipulation import channel_diagnostics as cd     # noqa: E402
+from file_manipulation import clock_recovery as cr          # noqa: E402
+from file_manipulation import extract_channels as xc        # noqa: E402
+from file_manipulation import midas_to_h5 as midas          # noqa: E402
 
 F_TRUE = 117.18659e6                 # run00270-like tag clock
 MODULUS = 1 << 30

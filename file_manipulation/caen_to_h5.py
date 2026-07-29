@@ -39,7 +39,7 @@ The reformatted file names a RUN, so it lands in that run's own folder, and ever
 later derived from it (extracted channels, recovered time axes) lands in the same folder,
 each in the subfolder for its kind.  The cube itself carries every channel, so it goes in
 multi_channel/.  The output argument may be omitted or given as a bare name, or a path with
-a folder to write elsewhere.  See file_manipulation/output_paths.py.
+a folder to write elsewhere.  See common/output_paths.py.
 
 Usage
 -----
@@ -60,13 +60,16 @@ from __future__ import annotations
 import argparse
 import logging
 import re
+import sys
 from pathlib import Path
 
 import h5py
 import numpy as np
 
-from output_paths import (compression_kwargs, dataset_of, resolve_input,
-                          resolve_output, run_dir)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # repo root (see README)
+
+from common.output_paths import (compression_kwargs, dataset_of,  # noqa: E402
+                                 resolve_input, resolve_output, run_dir)
 
 logger = logging.getLogger("caen_to_h5")
 

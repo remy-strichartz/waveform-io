@@ -4,7 +4,7 @@ organize_waveforms.py
 =====================
 Put every file under waveform_files/ where the shared layout says it belongs.
 
-The layout (file_manipulation/output_paths.py) groups each dataset in a folder of its own
+The layout (common/output_paths.py) groups each dataset in a folder of its own
 and splits that folder by KIND, so a run's channels, their time axes, its multi-channel
 cubes and its .mid stop burying each other:
 
@@ -35,12 +35,15 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 
 import h5py
 
-from output_paths import (CHANNELS, KINDS, MULTI_CHANNEL, WAVEFORM_DIR, is_data_file,
-                          kind_of, run_dir)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # repo root (see README)
+
+from common.output_paths import (CHANNELS, KINDS, MULTI_CHANNEL,  # noqa: E402
+                                 WAVEFORM_DIR, is_data_file, kind_of, run_dir)
 
 logger = logging.getLogger("organize_waveforms")
 
