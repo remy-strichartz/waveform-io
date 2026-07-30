@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-extract_channels.py
-===================
-Extract a subset of channels from a multi-channel HDF5 waveform file.
+"""Extract a subset of channels from a multi-channel HDF5 waveform file.
 
 All metadata datasets (source_event_index, headers_DGH0, etc.) and file
 attributes are copied across automatically.  Raw ADC values are preserved
@@ -101,8 +98,6 @@ def extract(input_path: str, output_path: str, channels: list[int],
                 stop = min(start + CHUNK_EVENTS, n_events)
                 block = wf[start:stop]
                 out[start:stop] = block[:, int(ch[0]), :] if single else block[:, ch, :]
-                print(f"  copied events {start:>6} - {stop - 1:>6}", end="\r")
-            print()
 
             # --- copy all other datasets verbatim (data + per-dataset attrs) ---
             # Attrs matter for the time axis: event_time_unix carries its units /
@@ -170,7 +165,9 @@ def extract(input_path: str, output_path: str, channels: list[int],
             )
 
     out_shape = f"({n_events}, {n_samples})" if single else f"({n_events}, {len(ch)}, {n_samples})"
-    logger.info("Done. Output shape: %s", out_shape)
+    print(f"Extracted channels {ch.tolist()} from {input_path}")
+    print(f"  waveforms: {out_shape}")
+    print(f"  output   : {output_path}")
 
 
 def parse_args() -> argparse.Namespace:

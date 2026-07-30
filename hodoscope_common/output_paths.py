@@ -5,6 +5,7 @@ inside that folder the files are split by KIND -- so a run's ten channels, their
 time axes, its multi-channel cubes and its .mid no longer bury each other:
 
     waveform_files/<run>/raw/            <run>.mid           as delivered by DAQ/vendor
+                                         <run>.h5.gz         (CAEN wavedump deliveries)
                         /multi_channel/  <run>.h5            whole-run cube (all channels)
                                          <run>_ch9-0-10.h5   several channels extracted
                         /channels/       <run>_ch0.h5        ONE channel extracted
@@ -42,8 +43,10 @@ KINDS = (RAW, MULTI_CHANNEL, CHANNELS, TIMES)
 _CH_SUFFIX = re.compile(r"_ch(\d+(?:-\d+)*)$")
 # Compression suffixes that sit OUTSIDE the real one (run00270.mid.gz).
 _PACKED = (".gz", ".bz2", ".xz")
-# The files the layout places: the pipeline's .h5 and the raw DAQ formats it converts from.
-DATA_SUFFIXES = (".h5", ".mid", ".midas")
+# The files the layout places: the pipeline's .h5 and the raw DAQ formats it converts
+# from -- including a .tar delivery bundle, which names its dataset and belongs in raw/
+# (file_manipulation/intake.py unpacks and converts it from there).
+DATA_SUFFIXES = (".h5", ".mid", ".midas", ".tar")
 
 
 def is_data_file(path: str | Path) -> bool:
@@ -259,7 +262,7 @@ def list_waveforms(pattern: str = "*.h5") -> list[Path]:
 
 def compression_kwargs(codec: str, level: int) -> dict:
     """HDF5 dataset compression options -- the ONE definition shared by every
-    writer in this package (midas_to_h5, caen_to_h5, extract_channels), so a
+    writer in this package (midas_to_h5, intake, extract_channels), so a
     codec tweak cannot silently diverge their on-disk formats.
 
     gzip (level-tunable) is the portable default; lzf is ~3-5x faster to write

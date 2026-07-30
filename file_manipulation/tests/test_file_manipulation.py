@@ -22,10 +22,14 @@ quietly-wrong failure modes found in the 2026-07-14 audit:
                      every file), which once made the parser treat everything
                      as BANK32.  Plus a .mid -> HDF5 end-to-end conversion
                      with special, bank-less and wrong-size events.
-  * CAEN REFORMATTER pad/skip/error handling of malformed flattened events,
+  * CAEN INTAKE      pad/skip/error handling of malformed flattened events,
                      zero-fill landing on the HIGHEST channels, numeric event
-                     order, and the modal-length geometry anchor (a corrupt
-                     FIRST event must not invert the good/bad classification).
+                     order, the modal-length geometry anchor (a corrupt FIRST
+                     event must not invert the good/bad classification), the
+                     tar/.h5.gz -> raw/ + multi_channel/ + manifest end-to-end
+                     path with idempotent re-runs, and the per-event time
+                     probe (float -> /event_time_rel_s, int -> raw counter,
+                     --trigger-rate-hz -> flagged synthetic).
   * EXTRACTION       chained extraction (extract from an extraction) works and
                      keeps selected_source_channels in ORIGINAL-file
                      coordinates; the n_channels attr matches the output.
@@ -53,7 +57,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))  # repo root
 
 from common import output_paths as op                       # noqa: E402
-from file_manipulation import caen_to_h5 as caen            # noqa: E402
+from file_manipulation import intake                        # noqa: E402
 from file_manipulation import channel_diagnostics as cd     # noqa: E402
 from file_manipulation import clock_recovery as cr          # noqa: E402
 from file_manipulation import extract_channels as xc        # noqa: E402
@@ -254,10 +258,11 @@ def test_midas_convert_end_to_end():
 
 
 # ---------------------------------------------------------------------------------
-# caen_to_h5
+# intake (CAEN)
 # ---------------------------------------------------------------------------------
 
-def _make_caen(path: Path, lengths: dict[int, int], n_events=12, base_len=12):
+def _make_caen(path: Path, lengths: dict[int, int], n_events=12, base_len=12,
+               times=None, config: dict | None = None):
     """Flattened per-event source file; event i holds i*100 + 1..len."""
     with h5py.File(path, "w") as f:
         g = f.create_group("events")
@@ -265,27 +270,33 @@ def _make_caen(path: Path, lengths: dict[int, int], n_events=12, base_len=12):
             ln = lengths.get(i, base_len)
             g.create_dataset(f"event{i}",
                              data=(np.arange(1, ln + 1, dtype=np.uint16) + 100 * i))
+        if times is not None:
+            f.create_dataset("times", data=times)
+        if config is not None:
+            c = f.create_group("config")
+            for k, v in config.items():
+                c.attrs[k] = v
 
 
-def test_caen_bad_event_modes():
+def test_intake_bad_event_modes():
     tmp = _tmp()
     try:
         src = tmp / "src.h5"
         _make_caen(src, lengths={5: 7, 10: 17})          # one short, one long
 
         try:                                             # error: halt (default)
-            caen.convert(str(src), str(tmp / "err.h5"), 4, None, None, "error")
+            intake.convert(str(src), str(tmp / "err.h5"), 4, None, None, "error")
             raise AssertionError("error mode did not raise")
         except ValueError:
             pass
 
-        caen.convert(str(src), str(tmp / "skip.h5"), 4, None, None, "skip")
+        intake.convert(str(src), str(tmp / "skip.h5"), 4, None, None, "skip")
         with h5py.File(tmp / "skip.h5", "r") as f:
             assert f["waveforms"].shape == (10, 4, 3)
             # numeric event order, malformed events dropped
             assert f["source_event_index"][()].tolist() == [0, 1, 2, 3, 4, 6, 7, 8, 9, 11]
 
-        caen.convert(str(src), str(tmp / "pad.h5"), 4, None, None, "pad")
+        intake.convert(str(src), str(tmp / "pad.h5"), 4, None, None, "pad")
         with h5py.File(tmp / "pad.h5", "r") as f:
             wf = f["waveforms"][()]
             assert wf.shape == (12, 4, 3)
@@ -299,7 +310,7 @@ def test_caen_bad_event_modes():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def test_caen_corrupt_first_event_does_not_set_geometry():
+def test_intake_corrupt_first_event_does_not_set_geometry():
     """event0 truncated to a length that still divides by n_channels: anchored
     to event 0 the geometry would be 4x2 and every GOOD event 'malformed'
     (skip would keep ONLY the corrupt event).  The modal anchor keeps 4x3."""
@@ -307,11 +318,125 @@ def test_caen_corrupt_first_event_does_not_set_geometry():
     try:
         src = tmp / "src.h5"
         _make_caen(src, lengths={0: 8}, n_events=10)
-        caen.convert(str(src), str(tmp / "out.h5"), 4, None, None, "skip")
+        intake.convert(str(src), str(tmp / "out.h5"), 4, None, None, "skip")
         with h5py.File(tmp / "out.h5", "r") as f:
             assert f["waveforms"].shape == (9, 4, 3)
             assert f["source_event_index"][()].tolist() == list(range(1, 10))
             assert f.attrs["n_malformed_events"] == 1
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_intake_time_probe_and_synthetic_axis():
+    """Float per-event times become /event_time_rel_s (relative to the first
+    event, rows matched by event NUMBER so a skipped event drops its row);
+    integer times are preserved verbatim as /trigger_time_tag, never promoted
+    to a time axis; --trigger-rate-hz writes a flagged-synthetic axis only
+    when the source has no times at all."""
+    tmp = _tmp()
+    try:
+        # Float seconds, one event malformed and skipped: rel times re-base to
+        # the first KEPT event and the bad event's row is dropped with it.
+        src = tmp / "ft.h5"
+        _make_caen(src, lengths={1: 7}, n_events=5, times=10.0 + np.arange(5) * 0.5)
+        intake.convert(str(src), str(tmp / "ft_out.h5"), 4, None, None, "skip")
+        with h5py.File(tmp / "ft_out.h5", "r") as f:
+            t = f["event_time_rel_s"][()]
+            assert t.tolist() == [0.0, 1.0, 1.5, 2.0]      # events 0,2,3,4
+            assert "from source 'times'" in f.attrs["time_axis"]
+
+        # Integer counter: copied verbatim, NOT a time axis.
+        src2 = tmp / "it.h5"
+        _make_caen(src2, lengths={}, n_events=4, times=np.arange(4, dtype=np.int64) * 1000)
+        intake.convert(str(src2), str(tmp / "it_out.h5"), 4, None, None, "error")
+        with h5py.File(tmp / "it_out.h5", "r") as f:
+            assert "event_time_rel_s" not in f
+            assert f["trigger_time_tag"][()].tolist() == [0, 1000, 2000, 3000]
+            assert "raw counter" in f.attrs["time_axis"]
+
+        # No times at all + --trigger-rate-hz: synthetic, and flagged as such.
+        src3 = tmp / "nt.h5"
+        _make_caen(src3, lengths={}, n_events=4)
+        intake.convert(str(src3), str(tmp / "nt_out.h5"), 4, None, None, "error",
+                       trigger_rate_hz=2.0)
+        with h5py.File(tmp / "nt_out.h5", "r") as f:
+            assert f["event_time_rel_s"][()].tolist() == [0.0, 0.5, 1.0, 1.5]
+            assert f["event_time_rel_s"].attrs["synthetic"]
+            assert "SYNTHETIC" in f.attrs["time_axis"]
+
+        # And with neither: no axis, honestly stamped.
+        intake.convert(str(src3), str(tmp / "nn_out.h5"), 4, None, None, "error")
+        with h5py.File(tmp / "nn_out.h5", "r") as f:
+            assert "event_time_rel_s" not in f and "trigger_time_tag" not in f
+            assert f.attrs["time_axis"].startswith("none")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_intake_tar_end_to_end_and_idempotent():
+    """A .tar of .h5.gz runs lands as ONE dataset folder: members unpacked into
+    raw/, cubes in multi_channel/ carrying the config_* attrs, a manifest with
+    the scan variables parsed from the names -- and a second run converts
+    nothing (skips everything already converted)."""
+    import gzip as _gzip
+    import tarfile as _tarfile
+    tmp = _tmp()
+    try:
+        base = tmp / "waveform_files"
+        cfg = {"ChannelList": np.arange(4, dtype=np.uint32), "RunNumber": 0,
+               "SamplingRate": "2.5GHz", "PostTriggerSize": 40}
+        members = []
+        for volt in (800, 900):
+            plain = tmp / f"MV_scan_Top{volt}V_0000_2.5Gs_40PT.h5"
+            _make_caen(plain, lengths={}, n_events=6, config=cfg)
+            packed = tmp / (plain.name + ".gz")
+            with open(plain, "rb") as fi, _gzip.open(packed, "wb") as fo:
+                shutil.copyfileobj(fi, fo)
+            plain.unlink()
+            members.append(packed)
+        tar_path = tmp / "my_scan.tar"
+        with _tarfile.open(tar_path, "w") as tf:
+            for m in members:
+                tf.add(m, arcname=m.name)
+        for m in members:
+            m.unlink()
+
+        assert intake.main([str(tar_path), "--dest", str(base)]) == 0
+        ds = base / "my_scan"
+        cubes = sorted((ds / "multi_channel").glob("*.h5"))
+        assert [c.name for c in sorted((ds / "raw").glob("*.h5.gz"))] == \
+               [f"MV_scan_Top{v}V_0000_2.5Gs_40PT.h5.gz" for v in (800, 900)]
+        assert [c.name for c in cubes] == \
+               [f"MV_scan_Top{v}V_0000_2.5Gs_40PT.h5" for v in (800, 900)]
+        with h5py.File(cubes[0], "r") as f:
+            assert f["waveforms"].shape == (6, 4, 3)
+            assert f.attrs["config_RunNumber"] == 0
+            assert f.attrs["time_axis"].startswith("none")
+
+        manifest = (ds / "manifest.csv").read_text()
+        header, row0 = manifest.splitlines()[:2]
+        assert "v_top" in header and "run_number" in header
+        assert "800" in row0
+
+        # Idempotent: nothing is rewritten on a second pass.
+        stamps = {c: c.stat().st_mtime_ns for c in cubes}
+        assert intake.main([str(tar_path), "--dest", str(base)]) == 0
+        assert {c: c.stat().st_mtime_ns for c in cubes} == stamps
+
+        # A loose duplicate-free .h5.gz gets its own dataset folder and is MOVED
+        # out of the drop point into raw/.
+        loose_src = tmp / "solo.h5"
+        _make_caen(loose_src, lengths={}, n_events=5, config=cfg)
+        loose = tmp / "MV_solo_run_0001.h5.gz"
+        with open(loose_src, "rb") as fi, _gzip.open(loose, "wb") as fo:
+            shutil.copyfileobj(fi, fo)
+        loose_src.unlink()
+        assert intake.main([str(loose), "--dest", str(base)]) == 0
+        assert not loose.exists()
+        assert (base / "MV_solo_run_0001" / "raw" / loose.name).exists()
+        with h5py.File(base / "MV_solo_run_0001" / "multi_channel"
+                       / "MV_solo_run_0001.h5", "r") as f:
+            assert f["waveforms"].shape == (5, 4, 3)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

@@ -29,7 +29,7 @@ Plain asserts, ASCII-only output; also importable by pytest (test_* functions).
 
 Run it with any python (no h5py/numpy needed):
 
-    python file_manipulation/tests/test_output_paths.py
+    python common/tests/test_output_paths.py
 """
 
 from __future__ import annotations
@@ -52,6 +52,12 @@ RUN = "run00270"
 def test_kind_of_raw():
     assert P.kind_of("run00270.mid") == P.RAW
     assert P.kind_of("run00270.mid.gz") == P.RAW
+    # CAEN wavedump deliveries: a gzipped vendor .h5 and a .tar bundle are both
+    # raw material for intake.py, and a tar names its dataset like any raw file.
+    assert P.kind_of("MV_run_0000.h5.gz") == P.RAW
+    assert P.kind_of("pmt_study.tar") == P.RAW
+    assert P.is_data_file("pmt_study.tar")
+    assert P.dataset_of("pmt_study.tar") == "pmt_study"
 
 
 def test_kind_of_whole_run_cube_is_multi_channel():
@@ -121,7 +127,7 @@ def test_run_dir_of_an_outside_source_names_a_folder_after_it():
 def test_resolve_output_places_each_kind():
     into = P.run_dir(stem=RUN)
     cases = {
-        f"{RUN}.h5":            P.MULTI_CHANNEL,   # midas_to_h5 / caen_to_h5
+        f"{RUN}.h5":            P.MULTI_CHANNEL,   # midas_to_h5 / intake
         f"{RUN}_ch9-0-10.h5":   P.MULTI_CHANNEL,   # extract_channels, several
         f"{RUN}_ch0.h5":        P.CHANNELS,        # extract_channels, one
         f"{RUN}_ch0_times.h5":  P.TIMES,           # event_times

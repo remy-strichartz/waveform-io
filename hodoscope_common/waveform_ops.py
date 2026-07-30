@@ -13,11 +13,8 @@ programs need those answers and they must all get the SAME answer:
 
 It lives in common/ rather than inside any one of them because a fork here is silent and
 wrong, not loud and broken: two copies of `detect_saturation` do not crash, they just
-disagree about which muons were real, and the disagreement surfaces as an unexplained
-few-percent shift in a spectrum months later.  The 2026-07-14 rail rebuild (topmost
->=0.5% cluster above P99, not the global mode) is exactly that kind of change -- it
-landed once here and every caller inherited it.  Keep it that way: physics definitions
-go in this module, and the programs above import them rather than re-deriving them.
+disagree about which events were real.  Physics definitions go in this module, and the
+programs above import them rather than re-deriving them.
 
 Nothing in here plots, parses arguments, or writes to disk -- those belong to the
 drivers.  The one I/O function, `load_waveforms`, is here because the same HDF5 layout
@@ -431,20 +428,13 @@ def detect_saturation(waveforms: np.ndarray, saturation_adc: float | None,
 
     if saturation_adc is None:
         vals, counts = np.unique(np.round(row_max).astype(np.int64), return_counts=True)
-        # A genuine rail is a pile-up of the TALLEST pulses: many events sharing one
-        # (rounded) peak value at the high end of the peak distribution.  Accept the
-        # TOPMOST value that is both common (>0.5% of events) and in the top
-        # percentile of peaks -- NOT the single most common value overall: on a
-        # mostly-noise channel the noise-ceiling mode out-counts a genuine 0.5-1%
-        # rail cluster (run00270 ch4: noise mode 666 x120 vs true rail 4095 x113),
-        # which used to hide the rail entirely and leave truly clipped events in
-        # CLEAN.  The percentile gate keeps the noise mode itself from qualifying:
-        # a true ADC rail always passes it (nothing exceeds a rail, so its pile-up
-        # IS the maximum of the peak distribution), while the noise ceiling sits
-        # near the MEDIAN of a noise-dominated channel -- accepting it would
-        # collapse the rail onto the noise ceiling and flag 50-100% of the channel
-        # as SATURATED (the old at/above-median gate cleared it by a coin flip:
-        # ch4 mode 666 vs median 707, a 0.6-sigma margin).
+        # A genuine rail is a pile-up of the TALLEST pulses: accept the TOPMOST
+        # (rounded) peak value that is both common (>0.5% of events) and in the top
+        # percentile of peaks.  NOT the single most common value overall: on a
+        # mostly-noise channel the noise-ceiling mode out-counts a genuine rail
+        # cluster and would hide it.  The percentile gate keeps the noise mode from
+        # qualifying: a true rail is the maximum of the peak distribution (nothing
+        # exceeds a rail), while a noise ceiling sits near the median.
         qual = np.flatnonzero((counts / len(waveforms) > 0.005) &
                               (vals >= np.percentile(row_max, 99.0)))
         if qual.size:

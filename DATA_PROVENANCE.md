@@ -31,6 +31,32 @@ sha256sum run00270.mid                      # or, on Windows:
 # Get-FileHash run00270.mid -Algorithm SHA256
 ```
 
+## pmt_study_test_071626 — PMT voltage scan (CAEN wavedump)
+
+| | |
+|---|---|
+| file | `pmt_study_test_071626.tar` (42 × `.h5.gz` CAEN wavedump runs) |
+| size | 1,023,047,680 bytes |
+| sha256 | `c7745e4c2523d88a4db8c6ff623fa6c088749484f871d39962d41d6f3ee69153` |
+| source | Yale muon-veto test stand; recorded 16 Jul 2026 |
+| received | 30 Jul 2026 |
+| contents | two-sided PMT voltage scan, 1000 events/run, ext. trigger, 2.5 GHz, 1012 samples: Bottom trigger fixed at 1100 V with Top scanned 800–1700 V, and vice versa, plus post-trigger variants (10/40/50/80 PT). No per-event timestamps in this format. |
+
+Everything under `waveform_files/pmt_study_test_071626/` is derived and regenerable —
+`raw/` holds the tar's members verbatim, so the tar itself is a redundant copy once
+taken in:
+
+```bash
+python file_manipulation/intake.py pmt_study_test_071626.tar
+```
+
+Also received 30 Jul 2026, same source and format:
+`MV_testLEDfrequency_LOWfreq_0ampl_0007_750Ms_80PT.h5.gz` (24,144,494 bytes, sha256
+`f6cb5e463728b5d18cdb606588d8a3d6bf2811aba115fa787a66f557f11f1de2`) — LED-frequency
+bench test at 0.75 GHz, run 0007; converted as its own dataset, not used by any pipeline.
+(The loose `MV_PMT_study_BottomTriggExt1100V_Top1100V_...h5.gz` alongside it is a
+byte-identical extract of the tar member of the same name — a duplicate, not new data.)
+
 ## Backup status
 
 The authoritative copy lives on **lab storage** (confirmed 2026-07-14); the working copy on

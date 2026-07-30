@@ -1,8 +1,4 @@
-#!/usr/bin/env python3
-"""
-peakfind.py
-===========
-A small, dependency-free replacement for scipy.signal.find_peaks, written so the
+"""A small, dependency-free replacement for scipy.signal.find_peaks, written so the
 triage cuts are fully transparent (no opaque C routine) and so the diagnostic
 tools can reuse the exact same peak logic.
 
@@ -90,14 +86,9 @@ def prominences(x: np.ndarray, peaks: np.ndarray) -> np.ndarray:
 
 def find_peaks_manual(x: np.ndarray, height: float | None = None,
                       prominence: float | None = None,
-                      distance: int | None = None,
-                      return_prominences: bool = False):
-    """Drop-in subset of scipy.signal.find_peaks.
-
-    Returns the peak indices (and, if `return_prominences`, the prominence of each
-    surviving peak).  Filters are applied in scipy's order: height, distance,
-    prominence.
-    """
+                      distance: int | None = None) -> np.ndarray:
+    """Drop-in subset of scipy.signal.find_peaks: returns the peak indices,
+    with filters applied in scipy's order (height, distance, prominence)."""
     peaks = local_maxima(x)
 
     if height is not None and peaks.size:
@@ -106,14 +97,7 @@ def find_peaks_manual(x: np.ndarray, height: float | None = None,
     if distance is not None and distance > 1 and peaks.size:
         peaks = peaks[_select_by_distance(peaks, x[peaks], int(distance))]
 
-    prom = None
     if prominence is not None and peaks.size:
-        prom = prominences(x, peaks)
-        mask = prom >= prominence
-        peaks, prom = peaks[mask], prom[mask]
+        peaks = peaks[prominences(x, peaks) >= prominence]
 
-    if return_prominences:
-        if prom is None:
-            prom = prominences(x, peaks) if peaks.size else np.empty(0)
-        return peaks, prom
     return peaks

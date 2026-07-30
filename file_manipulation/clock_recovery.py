@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-clock_recovery.py
-=================
-The two-clock trigger-time recovery, as pure array math with NO file-format
+"""The two-clock trigger-time recovery, as pure array math with NO file-format
 dependencies -- so both ends of the chain can use one implementation:
 
   * file_manipulation/midas_to_h5.py and extract_channels.py call it at

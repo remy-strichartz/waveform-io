@@ -16,13 +16,13 @@ Polarity is auto-detected PER CHANNEL by default, so a file mixing positive-goin
 SiPM/hodoscope channels with negative-going PMT channels is handled correctly: a
 negative channel's trigger and amplitude are measured from its downward excursion.
 The vote is the project's shared 95th-percentile excursion vote
-(waveform_triage.resolve_polarity, identical to mv_pipeline's), which keeps the
+(common.waveform_ops.resolve_polarity), which keeps the
 right sign even on a channel that fires on only a modest fraction of events --
 where a median-excursion vote would be decided by noise.  Force it with
 --polarity positive/negative.
 
-Each channel's pulse window is chosen automatically from its own data using the same
-routine as waveform_triage (recommend_window), so peak amplitudes / trigger rates are
+Each channel's pulse window is chosen automatically from its own data using the shared
+routine (common.waveform_ops.recommend_window), so peak amplitudes / trigger rates are
 measured where each channel's pulse actually sits.  Disable with --no-auto-window to use
 a fixed --pulse-lo/--pulse-hi for every channel.
 
@@ -156,18 +156,9 @@ def load(path: Path, max_events: int | None = DEFAULT_MAX_EVENTS) -> tuple[np.nd
 # Per-channel statistics  (fast: all numpy, no loops over events)
 # ---------------------------------------------------------------------------
 
-# NOTE: this tool deliberately reports NO time-walk number.  It once printed a
-# corr(argmax position, log peak height) per channel, which was removed because an
-# argmax-based walk estimate is confounded exactly where it would be read:
-#   * on a rail-clipped channel the argmax lands on the FIRST rail sample, so the tall
-#     (= saturated) pulses read early and fake a strongly negative correlation -- run00270
-#     ch0 is ~8% clipped, i.e. the flagship channel was the one it misread;
-#   * on low-SNR channels the coherent pickup pulls the argmax a full line period early
-#     unless the line is notched out first, which this tool does not do.
-# The honest measurement is downstream and per-channel: mv_pipeline.timewalk_slope /
-# plot 11_timing (on the OF's sub-sample peak time), and energy_reconstruction/
-# timewalk_report.py (notched, 50%-leading-edge).  Neither is a screening question a
-# multi-channel triage table can answer, and no extraction decision turns on it.
+# This tool deliberately reports NO time-walk number: an argmax-based walk estimate
+# is confounded by rail clipping and coherent pickup.  The honest measurements are
+# downstream (mv_pipeline's timing plot, energy_reconstruction/timewalk_report.py).
 
 
 def channel_stats(waveforms: np.ndarray, pulse_lo: int, pulse_hi: int,
@@ -223,23 +214,13 @@ def channel_stats(waveforms: np.ndarray, pulse_lo: int, pulse_hi: int,
             "trigger_rate":    float(triggered.mean()),
             "n_triggered":     int(triggered.sum()),
             "median_peak_adc": float(np.median(peak_vals[triggered])) if triggered.any() else 0.0,
-            # Pulse height ABOVE baseline (ADC): the peak of the MEDIAN PULSE inside the
-            # window.  A real pulse is tens-to-thousands of ADC, a disconnected channel's
-            # crest only a few LSB, so this absolute prominence -- NOT the sigma-relative
-            # trigger rate, which a tiny noise sigma inflates -- is what separates live
-            # channels from dead ones (active_channels / --min-pulse-adc).
-            #
-            # It is the peak of the median PULSE, not the median of the per-event PEAKS
-            # (which is what this used to be), because only the former requires the pulse
-            # to be COHERENT.  A real pulse lands at the same place every event, so it
-            # survives a median; a dead channel's noise spikes and end-of-record glitches
-            # land anywhere, so they average away.  The per-event-peak version could not
-            # tell the two apart: it takes each event's own max, so incoherent spikes
-            # counted in full.  On run00270 that let the disconnected ch14 and ch20 (whose
-            # auto-window had latched onto the record edge, where the glitches are) read
-            # 39 and 65 ADC and masquerade as live, while their median pulse is flat.
-            # Coherent: the 21 dead channels now sit at 12-13 ADC and the live ones at
-            # 78-2634, so the 20-ADC default gate has a 6x gap to sit in instead of 2x.
+            # Pulse height above baseline: the peak of the MEDIAN pulse inside the
+            # window -- not the median of per-event peaks -- because only the former
+            # requires the pulse to be COHERENT.  A real pulse lands at the same place
+            # every event and survives a median; a dead channel's incoherent noise
+            # spikes and record-edge glitches average away.  This absolute prominence
+            # (not the sigma-relative trigger rate, which a ~1 LSB noise sigma
+            # inflates) is what separates live channels from dead ones.
             "pulse_prom":      float(median_pulse[lo:hi].max()),
             "peak_vals":       peak_vals,
             "triggered":       triggered,
@@ -253,16 +234,10 @@ def active_channels(stats: list[dict], dead_threshold: float,
                     min_pulse_adc: float = 0.0) -> list[int]:
     """Channels that are genuinely live: they clear the trigger-rate threshold AND have a
     real pulse (`pulse_prom` -- the peak of the channel's MEDIAN pulse inside its window --
-    at least `min_pulse_adc` ADC above baseline).
-
-    The amplitude gate is what does the real work.  A disconnected channel's noise sigma
-    sits at the ADC quantization floor (~1 LSB), so the sigma-relative trigger threshold is
-    only a few ADC and ordinary fluctuations cross it: on run00270 every dead channel still
-    "triggers" on 8-12% of events, so the trigger rate ALONE calls all of them active.  The
-    absolute pulse height is what separates them -- and it must be measured coherently (see
-    the `pulse_prom` note in channel_stats), or end-of-record glitches on a dead channel
-    fake a pulse tens of ADC tall.
-    """
+    at least `min_pulse_adc` ADC above baseline).  The amplitude gate does the real work:
+    a disconnected channel's ~1 LSB noise sigma lets ordinary fluctuations cross the
+    sigma-relative trigger threshold, so trigger rate alone cannot separate live from
+    dead (see the `pulse_prom` note in channel_stats)."""
     return [s["channel"] for s in stats
             if s["trigger_rate"] * 100 >= dead_threshold and s["pulse_prom"] >= min_pulse_adc]
 
@@ -272,26 +247,15 @@ def active_channels(stats: list[dict], dead_threshold: float,
 # ---------------------------------------------------------------------------
 
 def print_summary(stats: list[dict], active: list[int]) -> None:
-    # ASCII only, like every other console table in the project.  Python prints to a real
-    # Windows console through the wide-char API and would render 'sigma'/arrows fine, but
-    # the moment stdout is REDIRECTED (piped, or `> log.txt`) it falls back to the locale
-    # codec -- cp1252 here -- which cannot encode them, and the run dies with
-    # UnicodeEncodeError after all the analysis work is done.  Symbols in the matplotlib
-    # labels below are fine: they never go through stdout.
-    # The pulse column is `pulse_prom` -- the pulse height ABOVE BASELINE -- NOT the raw
-    # oriented peak level.  It has to be, because it sits next to the dead/disconnected
-    # flag and that flag is decided on exactly this quantity (active_channels ->
-    # --min-pulse-adc); printing anything else would let the column and the flag disagree.
-    # The raw level carries each channel's own pedestal (hundreds-to-thousands of ADC, and
-    # DIFFERENT per channel), which inverted the very comparison the column exists for: on
-    # caen.h5 the live ch0 read 3162 and the disconnected ch2 read 3191 -- the dead channel
-    # looked BRIGHTER -- when the real pulse heights are 245 vs 4 ADC.  Baseline is its own
-    # column, so nothing is lost.
+    # ASCII only: redirected stdout falls back to the locale codec (cp1252 on
+    # Windows), which cannot encode sigma/arrow glyphs and kills the run after
+    # all the work is done.  matplotlib labels are exempt (never hit stdout).
+    # The pulse column is `pulse_prom` (height ABOVE baseline), the exact quantity
+    # the dead/disconnected flag is decided on -- a raw peak level would carry each
+    # channel's own pedestal and make dead channels look brighter than live ones.
     active_set = set(active)
-    print("=" * 92)
     print(f"{'CH':>3}  {'Polarity':>8}  {'Baseline':>9}  {'Noise sigma':>11}  {'Window':>12}  "
           f"{'Triggered':>10}  {'Trig %':>7}  {'Pulse ADC':>10}")
-    print(f"{'':>3}  {'':>8}  {'':>9}  {'':>11}  {'':>12}  {'':>10}  {'':>7}  {'(over base)':>10}")
     print("-" * 92)
     for s in stats:
         flag = "" if s["channel"] in active_set else "  <- dead/disconnected"
@@ -299,7 +263,6 @@ def print_summary(stats: list[dict], active: list[int]) -> None:
         print(f"{s['channel']:>3}  {s['polarity']:>8}  {s['baseline']:>9.1f}  {s['noise_sigma']:>11.2f}  "
               f"{win:>12}  {s['n_triggered']:>10,}  {100*s['trigger_rate']:>7.1f}%  "
               f"{s['pulse_prom']:>10.0f}{flag}")
-    print("=" * 92)
 
 
 # ---------------------------------------------------------------------------
@@ -307,25 +270,33 @@ def print_summary(stats: list[dict], active: list[int]) -> None:
 # ---------------------------------------------------------------------------
 
 def plot_overview(waveforms, stats, active, out_dir=None, show=True, save=False,
-                  dead_threshold: float = 5.0) -> None:
+                  dead_threshold: float = 5.0, min_pulse_adc: float = 20.0) -> None:
     """Single figure: trigger rate, noise sigma, median pulse height, median waveforms."""
     plt = setup_mpl(show)
+    from matplotlib.patches import Patch
     n_ch = len(stats)
     ch_ids = list(range(n_ch))
     fig, axes = plt.subplots(2, 2, figsize=(14, 8))
 
     # Trigger rate -- colored by the FULL activeness test (rate AND pulse amplitude),
-    # so a dead channel that clears the rate on noise alone still reads red, not
-    # green.  The guide line is the ACTUAL --dead-threshold, so line and colors
-    # can never contradict each other.
+    # so a dead channel that clears the rate on noise alone still reads red.  Dead
+    # channels routinely sit ABOVE the rate line (quantization-floor noise triggers
+    # them); no rate threshold separates live from dead, which is why the amplitude
+    # gate exists.  The legend says which gate a red bar failed.
     ax = axes[0, 0]
     active_set = set(active)
     colors = ["C2" if s["channel"] in active_set else "C3" for s in stats]
     ax.bar(ch_ids, [s["trigger_rate"] * 100 for s in stats], color=colors, alpha=0.85)
     ax.axhline(dead_threshold, ls="--", color="gray", lw=0.8,
-               label=f"{dead_threshold:g}% threshold")
+               label=f"{dead_threshold:g}% rate gate")
+    ax.legend(handles=[
+        Patch(color="C2", alpha=0.85, label="active"),
+        Patch(color="C3", alpha=0.85,
+              label=f"dead: rate < {dead_threshold:g}% or pulse < {min_pulse_adc:g} ADC"),
+        *ax.get_legend_handles_labels()[0],
+    ], fontsize=8)
     ax.set(xlabel="Channel", ylabel="Trigger rate (%)", title="Trigger rate per channel")
-    ax.grid(True, axis="y", alpha=0.3); ax.legend()
+    ax.grid(True, axis="y", alpha=0.3)
 
     # Noise sigma
     ax = axes[0, 1]
@@ -333,37 +304,29 @@ def plot_overview(waveforms, stats, active, out_dir=None, show=True, save=False,
     ax.set(xlabel="Channel", ylabel="Noise sigma (ADC)", title="Pre-pulse noise sigma per channel")
     ax.grid(True, axis="y", alpha=0.3)
 
-    # Median pulse height (active only) -- ABOVE BASELINE (pulse_prom), for the same reason
-    # the printed table uses it: each channel sits on its OWN pedestal, so bars of the raw
-    # peak level are dominated by the pedestal and are NOT comparable across channels.  On
-    # run00270 that mattered: the raw bars made ch9/ch10 (pedestals ~2386/~2337) look like
-    # the 2nd/3rd brightest channels when they are in fact the two DIMMEST active ones
-    # (93 / 81 ADC of actual pulse).  Height over baseline is the light each channel saw,
-    # which is what this panel is asked for.
+    # Median pulse height (active only) -- ABOVE BASELINE (pulse_prom): each channel
+    # sits on its own pedestal, so raw peak levels are not comparable across channels.
     ax = axes[1, 0]
     ax.bar([s["channel"] for s in stats if s["channel"] in active],
            [s["pulse_prom"] for s in stats if s["channel"] in active],
            color="C1", alpha=0.85)
+    # Channel numbers are integers; with only a couple of active channels the
+    # autolocator otherwise picks fractional ticks (caen.h5: -0.25 .. 1.25).
+    from matplotlib.ticker import MaxNLocator
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     ax.set(xlabel="Channel", ylabel="Median pulse height over baseline (ADC)",
            title="Median pulse amplitude (active channels)")
     ax.grid(True, axis="y", alpha=0.3)
 
-    # Median waveforms -- ACTIVE channels only (same set used everywhere else), so a
-    # file full of disconnected channels doesn't overprint 30+ colors here.  Median
-    # over ALL events (not just triggered): cheap, argmax-free, and it keeps negative
-    # (PMT) polarity visible -- but know what it shows: on a channel that pulses in
-    # under ~half its events the all-event median converges toward baseline, so the
-    # drawn pulse UNDERSTATES the real one (run00270 ch4: 108 ADC drawn vs 774 real,
-    # 7x).  This panel is a shape/pointing check; the amplitude bar beside it (from
-    # the real-pulse median) is the height to read.
-    #
-    # tab20 (not tab10) and a linestyle that changes every 20 channels: with tab10 the
-    # color repeated at channel 10, so on run00270 -- which has exactly 11 active
-    # channels -- ch0 and ch10 drew in the SAME blue and the legend could not tell them
-    # apart.  A 32-channel CAEN file can in principle fill the whole palette, hence the
-    # linestyle fallback rather than a wider colormap alone.
+    # Median waveforms -- active channels only, median over ALL events.  On a channel
+    # that pulses in under ~half its events this median understates the real pulse:
+    # it is a shape/pointing check, the amplitude bar beside it is the height to read.
+    # Palette: tab20 reordered dark-hues-first (native order pairs dark/light shades
+    # of one hue, making neighbors indistinguishable) with a linestyle change every
+    # 20 channels so a full 32-channel file stays legible.
     ax = axes[1, 1]
     cmap = plt.get_cmap("tab20")
+    palette = [cmap(i) for i in (*range(0, 20, 2), *range(1, 20, 2))]
     styles = ["-", "--", ":"]
     shown = []
     for s in stats:
@@ -372,7 +335,7 @@ def plot_overview(waveforms, stats, active, out_dir=None, show=True, save=False,
         med = np.median(waveforms[:, s["channel"], :] - s["baseline"], axis=0)
         tag = " (neg)" if s["polarity"] == "negative" else ""
         ch = s["channel"]
-        col = cmap(ch % 20)
+        col = palette[ch % 20]
         ls = styles[(ch // 20) % len(styles)]
         ax.plot(med, color=col, ls=ls, lw=1.2, label=f"ch{ch}{tag}")
         shown.append(ch)
@@ -414,7 +377,20 @@ def plot_peak_histograms(stats, active, out_dir=None, show=True, save=False,
         for k, ch in enumerate(chans):
             s = next(s for s in stats if s["channel"] == ch)
             ax = axes[k // cols][k % cols]; ax.axis("on")
-            ax.hist(s["peak_vals"], bins=100, color="C0", alpha=0.8)
+            vals = s["peak_vals"]
+            if np.ptp(vals) <= 2.0:
+                # Every event peaks at ONE level: a discriminator/gate channel (a
+                # logic pulse pinned at the rail by design).  Autoscaling would draw
+                # one full-height bar on a sub-ADC axis; give it an integer-ADC axis
+                # around the level and say what it is.
+                c = float(np.median(vals))
+                ax.hist(vals, bins=np.arange(round(c) - 10.5, round(c) + 11.5),
+                        color="C0", alpha=0.8)
+                ax.annotate(f"all {vals.size:,} peaks at {c:.0f} ADC\n"
+                            "(discriminator-like: one level)",
+                            xy=(0.04, 0.95), xycoords="axes fraction", va="top", fontsize=8)
+            else:
+                ax.hist(vals, bins=100, color="C0", alpha=0.8)
             ax.set_yscale("log")
             pol_tag = ", neg" if s["polarity"] == "negative" else ""
             ax.set_title(f"ch{ch}  (win [{s['pulse_lo']},{s['pulse_hi']}], "
@@ -436,22 +412,16 @@ def plot_window_diagnostics(stats, active, out_dir=None, show=True, save=False,
     QC for the window that every number in print_summary is measured in.
 
     Left column: histogram of the full-record ARGMAX positions of the real pulses (log y).
-    Right column: that channel's median pulse.  The shaded band is the window
-    channel_stats selected (auto or fallback); it should bracket both the peak-position
-    cluster and the median-pulse peak.  If it does not, the channel's trigger rate and
-    median peak are being measured in the wrong place -- re-run with --no-auto-window and
-    an explicit --pulse-lo/--pulse-hi, or investigate the channel.
+    Right column: that channel's median pulse.  The shaded band is the selected window;
+    it should bracket both the peak-position cluster and the median-pulse peak.  If not,
+    re-run with --no-auto-window and an explicit --pulse-lo/--pulse-hi.
 
-    READ THE LEFT PANEL AS A WINDOW CHECK, NOT AS TIMING.  These are argmax positions
-    because the window's job is to CONTAIN the peaks (recommend_window uses argmax for the
-    same reason).  But the argmax of a rail-clipped pulse lands on its FIRST rail sample,
-    so a saturated channel shows a spurious early shoulder here that is clipping, not early
-    arrival (documented on run00270 ch0, ~85% of that shoulder ADC-clipped).  For arrival
-    time use the saturation-immune 50% leading edge instead: preprocessing/pulse_window.py
-    `window` (single channel), which also plots height-vs-arrival.
+    Read the left panel as a WINDOW check, not as timing: the argmax of a rail-clipped
+    pulse lands on its first rail sample, so a saturated channel shows a spurious early
+    shoulder that is clipping, not early arrival.  For arrival time use the 50% leading
+    edge (preprocessing/pulse_window.py).
 
-    Each channel spans two plots, so a page shows ~`per_page`/2 channels; browse
-    pages with ← → (or n/p), Esc/Q to close."""
+    Each channel spans two plots, so a page shows ~`per_page`/2 channels."""
     n = len(active)
     if n == 0:
         print("No active channels to plot.")
@@ -504,24 +474,12 @@ def plot_noise_floor(waveforms, stats, active, out_dir=None, show=True, save=Fal
     """Pre-pulse noise TRACES for active channels only (before each channel's window).
     Up to `per_page` channels per page in a 3-wide grid; browse with ← → (or n/p).
 
-    WHEN TO RUN THIS (it is off by default and slow -- `n_sample` traces x `per_page`
-    channels of line plots per page): the overview's noise-sigma bar gives one NUMBER per
-    channel, which is all you need when the baseline is white.  Reach for this plot when
-    you want to know whether it IS -- a new dataset, a re-cabled detector, or a channel
-    whose sigma is unexpectedly large -- because sigma cannot tell white noise from
-    structure, and it is structure that breaks the downstream noise model.
-
-    What it looks like on run00270, which is what the plot is calibrated against: the
-    analog channels (ch0-ch7) show an obvious regular SINUSOID on the single-event traces
-    -- the documented coherent line pickup -- while the PMTs (ch8-ch10) show spiky,
-    aperiodic noise with no ripple, and a dead channel shows discrete +-1 LSB quantization
-    steps.  Note the median stays FLAT on every channel including the rippling ones: the
-    pickup's phase is random event to event, so it averages away.  That is exactly why no
-    other panel in this file can see it, and why the single-event traces have to be here.
-
-    A ripple means the per-channel tools need their noise model checked -- mv_pipeline's
-    noise PSD resolves the actual line frequencies, and its Baseline Noise Residuals panel
-    quantifies non-Gaussianity.  This plot only tells you WHETHER to go look."""
+    Off by default and slow.  The overview's noise-sigma bar says how BIG each channel's
+    noise is; run this when you need to know whether it is WHITE -- sigma cannot tell
+    white noise from structure (coherent line pickup, spike noise), and a phase-random
+    ripple averages out of every median panel, so single-event traces are the only place
+    it is visible.  A ripple means the downstream noise model needs checking
+    (mv_pipeline's noise PSD resolves the actual line frequencies)."""
     rng = np.random.default_rng(0)
     N = waveforms.shape[0]
     pick = rng.choice(N, min(n_sample, N), replace=False)
@@ -552,9 +510,8 @@ def plot_noise_floor(waveforms, stats, active, out_dir=None, show=True, save=Fal
                 ax.plot(row, color="C1", lw=0.7, alpha=0.9,
                         label="single events" if j == 0 else None)
             ax.plot(np.median(sub, axis=0), color="C3", lw=1.2, label="median")
-            # Clamp to the bulk (+-5 sigma).  Autoscaling lets the rare spike/burst events
-            # set the y-range and squashes the band that carries the structure into a
-            # sliver -- on run00270 that alone made this plot unreadable.
+            # Clamp to the bulk (+-5 sigma): autoscaling lets rare spike/burst events
+            # set the y-range and squash the band that carries the structure.
             lim = 5 * s["noise_sigma"]
             if np.isfinite(lim) and lim > 0:
                 ax.set_ylim(-lim, lim)
@@ -739,7 +696,7 @@ def main() -> None:
                                   overwrite=args.overwrite) if save else None
 
     plot_overview(waveforms, stats, active, out_dir, show, save,
-                  dead_threshold=args.dead_threshold)
+                  dead_threshold=args.dead_threshold, min_pulse_adc=args.min_pulse_adc)
     plot_peak_histograms(stats, active, out_dir, show, save, per_page=args.per_page)
     plot_window_diagnostics(stats, active, out_dir, show, save, per_page=args.per_page)
 

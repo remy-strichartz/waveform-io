@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-organize_waveforms.py
-=====================
-Put every file under waveform_files/ where the shared layout says it belongs.
+"""Put every file under waveform_files/ where the shared layout says it belongs.
 
 The layout (common/output_paths.py) groups each dataset in a folder of its own
 and splits that folder by KIND, so a run's channels, their time axes, its multi-channel

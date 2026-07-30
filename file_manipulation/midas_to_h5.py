@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-midas_to_h5.py
-==============
-Convert a MIDAS .mid (or .mid.gz) DAQ file to HDF5.
+"""Convert a MIDAS .mid (or .mid.gz) DAQ file to HDF5.
 
 No external midas package required -- this implements the MIDAS binary format
 directly using only numpy, h5py, and the Python standard library.
@@ -316,9 +313,6 @@ def convert(
             if buf_i == chunk_size:
                 flush_buffers()
 
-            if n_written % 10000 == 0:
-                logger.info("%d events written...", n_written)
-
         # Flush the final (partial) buffer -- the only non-chunk-aligned write.
         flush_buffers()
 
@@ -364,16 +358,12 @@ def convert(
                            "recovery, times filled from the wall clock).",
                            n_bad_hdr, n_written, hdr_bank)
 
-    print()
-    print("=" * 52)
-    print("Done.")
-    print(f"Events written  : {n_written:,}")
-    print(f"Events skipped  : {n_skipped:,}")
+    print(f"Converted {input_path}")
+    print(f"  events written : {n_written:,}  (skipped {n_skipped:,})")
     if n_bad_hdr:
-        print(f"Missing headers : {n_bad_hdr:,}  (see WARNING above)")
-    print(f"Output          : {output_path}")
-    print(f"Waveform shape  : ({n_written}, {n_channels}, {n_samples})")
-    print("=" * 52)
+        print(f"  missing headers: {n_bad_hdr:,}  (see WARNING above)")
+    print(f"  waveforms      : ({n_written}, {n_channels}, {n_samples})")
+    print(f"  output         : {output_path}")
 
 
 # ---------------------------------------------------------------------------

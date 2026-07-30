@@ -4,8 +4,8 @@ DAQ ingestion and first-look diagnostics: everything that happens **before** a c
 worth committing to the slow per-channel pipelines.
 
 ```
-   .mid / CAEN .h5                                        (raw DAQ)
-        |  midas_to_h5.py / caen_to_h5.py                 convert -> multi-channel HDF5
+   .mid  |  CAEN .tar / .h5.gz / .h5                      (raw DAQ, as delivered)
+        |  midas_to_h5.py  |  intake.py                   convert -> multi-channel HDF5
         v
    waveform_files/<dataset>/multi_channel/<run>.h5
         |  channel_diagnostics.py                         WHICH channels are worth extracting?
@@ -21,8 +21,8 @@ worth committing to the slow per-channel pipelines.
 
 | Module | Role |
 |---|---|
+| `intake.py` | **the CAEN front door**: `.tar` bundles / `.h5.gz` / vendor `.h5` -> unpacked into `raw/`, converted to `(events, channels, samples)` cubes, `manifest.csv` per dataset. No arguments = scan for anything new. Self-contained on purpose — copy the one file into another workspace and it works there too. |
 | `midas_to_h5.py` | MIDAS `.mid` -> multi-channel HDF5 (+ recovered trigger-time axis) |
-| `caen_to_h5.py` | CAEN per-event flattened datasets -> `(events, channels, samples)` |
 | `extract_channels.py` | multi-channel file -> one file per channel |
 | `clock_recovery.py` | TTT -> seconds; writes `/event_time_rel_s` at conversion |
 | `organize_waveforms.py` | files -> `waveform_files/<dataset>/{raw,multi_channel,channels,times}/` |
