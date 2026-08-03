@@ -57,6 +57,31 @@ bench test at 0.75 GHz, run 0007; converted as its own dataset, not used by any 
 (The loose `MV_PMT_study_BottomTriggExt1100V_Top1100V_...h5.gz` alongside it is a
 byte-identical extract of the tar member of the same name — a duplicate, not new data.)
 
+## caen — CAEN wavedump bench run (feeds a canonical result)
+
+| | |
+|---|---|
+| file | `waveform_files/caen/multi_channel/caen.h5` |
+| size | 18,560,029 bytes |
+| sha256 | `18f2e9d2204ce9a4bf2eff46d0c6799bac76f578e76898b2bf592c0dd673aa55` |
+| source | Yale muon-veto test stand, CAEN digitiser (wavedump) |
+| contents | 1000 events × 32 channels × 1012 samples, int16; 1 GHz sampling, 1024-sample record length, post-trigger setting 50, external trigger, RunNumber 0 |
+
+**This one is not regenerable — it is the exception to the rule above.** Its own HDF5
+attributes record `reformatted_by = caen_to_h5.py` and `source_file =
+waveform_files\caen.h5`, but that vendor original is no longer on the analysis machine and
+`caen_to_h5.py` was deleted when `intake.py` became the single CAEN front door (2026-07-30).
+Nothing in this repo can rebuild `caen.h5`, so it is a **terminal artifact like
+`run00270.mid`** — which is exactly why its hash is recorded here rather than left implicit.
+
+It matters because `caen_ch0` is a job in the canonical `run_batch.py` sweep: its muon-mode
+MPV is a number of record. The per-channel file `caen_ch0.h5` (539,283 bytes, sha256
+`b0d94f388062d09cec625dead42420871b09f58c193dc626ceadeb4ca3161983`) *is* derived and
+regenerable from it with `extract_channels.py`.
+
+Note the sampling rate — 1 GHz here against 2.5 GHz for the PMT voltage scan above. This is
+an earlier, separate delivery, not a member of `pmt_study_test_071626.tar`.
+
 ## Backup status
 
 The authoritative copy lives on **lab storage** (confirmed 2026-07-14); the working copy on
