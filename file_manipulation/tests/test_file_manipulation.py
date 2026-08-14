@@ -56,7 +56,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))  # repo root
 
-from common import output_paths as op                       # noqa: E402
+from hodoscope_common import output_paths as op                       # noqa: E402
 from file_manipulation import intake                        # noqa: E402
 from file_manipulation import channel_diagnostics as cd     # noqa: E402
 from file_manipulation import clock_recovery as cr          # noqa: E402

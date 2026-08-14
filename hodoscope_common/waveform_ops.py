@@ -11,7 +11,7 @@ programs need those answers and they must all get the SAME answer:
     file_manipulation/channel_diagnostics.py  per-channel overview of a whole run
     energy_reconstruction/mv_pipeline.py   drops NOISE/PILEUP/clipped events from its model
 
-It lives in common/ rather than inside any one of them because a fork here is silent and
+It lives in hodoscope_common/ rather than inside any one of them because a fork here is silent and
 wrong, not loud and broken: two copies of `detect_saturation` do not crash, they just
 disagree about which events were real.  Physics definitions go in this module, and the
 programs above import them rather than re-deriving them.
@@ -29,9 +29,9 @@ from typing import Any, NamedTuple
 
 import numpy as np
 
-from common.peakfind import find_peaks_manual
+from hodoscope_common.peakfind import find_peaks_manual
 
-logger = logging.getLogger("common.waveform_ops")
+logger = logging.getLogger("hodoscope_common.waveform_ops")
 
 # Recommended cut presets per detector readout, derived from the run00270 data.
 # SiPM pulses are tall, slow, positive and can clip the ADC rail; PMT pulses are

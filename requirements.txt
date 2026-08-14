@@ -1,0 +1,13 @@
+# Dependencies for waveform-io.  See the Environment section in README.md.
+#
+# No scipy: hodoscope_common/peakfind.py implements the peak search this layer needs
+# directly, as a documented subset of scipy.signal.find_peaks.  That is on purpose -- this
+# repo is installed as a dependency by waveform-qc and waveform-analysis, so every package
+# added here is one those repos cannot avoid.
+#
+# No floors established; the versions below are what the results trees downstream were
+# produced under (run_batch.py records this in each batch's manifest).
+#   numpy 2.4.1   h5py 3.16.0   matplotlib 3.10.8
+numpy
+h5py
+matplotlib

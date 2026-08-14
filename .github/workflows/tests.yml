@@ -1,7 +1,10 @@
 name: tests
 
-# All five suites are synthetic end-to-end regressions -- they build their own waveforms
-# and touch no real data, which is exactly what makes them runnable here.  ~45 s combined.
+# Both suites are synthetic end-to-end regressions -- they build their own waveforms and
+# touch no real data, which is exactly what makes them runnable here.
+#
+# This repo is the base of the stack and depends on nothing else, so CI here needs no
+# cross-repo checkout and no secrets.  The downstream repos are the ones that do.
 on:
   push:
     branches: [main]
@@ -25,19 +28,13 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Record the environment under test
-        run: python -c "import numpy,scipy,h5py,matplotlib as m;print('numpy',numpy.__version__);print('scipy',scipy.__version__);print('h5py',h5py.__version__);print('matplotlib',m.__version__)"
+        run: python -c "import numpy,h5py,matplotlib as m;print('numpy',numpy.__version__);print('h5py',h5py.__version__);print('matplotlib',m.__version__)"
 
-      - name: common
-        run: python common/tests/test_output_paths.py
+      - name: hodoscope_common (output_paths)
+        run: python hodoscope_common/tests/test_output_paths.py
 
-      - name: common (declip)
-        run: python common/tests/test_declip.py
+      - name: hodoscope_common (declip)
+        run: python hodoscope_common/tests/test_declip.py
 
       - name: file_manipulation
         run: python file_manipulation/tests/test_file_manipulation.py
-
-      - name: preprocessing
-        run: python preprocessing/tests/test_preprocessing.py
-
-      - name: energy_reconstruction
-        run: python energy_reconstruction/tests/test_energy_reconstruction.py

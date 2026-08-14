@@ -29,7 +29,7 @@ worth committing to the slow per-channel pipelines.
 | `channel_diagnostics.py` | **the diagnostic surface** (below) |
 
 The input lookup and `<pipeline>_results/` conventions this package writes by live in
-[`common/output_paths.py`](../common/output_paths.py) — every package resolves paths
+[`hodoscope_common/output_paths.py`](../hodoscope_common/output_paths.py) — every package resolves paths
 through the same module, so converters and analyzers agree on locations by construction.
 
 The converters and utilities only log progress and print a short end-of-run receipt
@@ -122,5 +122,5 @@ A bare filename is resolved inside `waveform_files/` — no path needed.
 
 ```bash
 python tests/test_file_manipulation.py
-python ../common/tests/test_output_paths.py   # the path conventions this package writes by
+python ../hodoscope_common/tests/test_output_paths.py   # the path conventions this package writes by
 ```

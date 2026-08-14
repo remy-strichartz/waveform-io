@@ -11,7 +11,7 @@ exactly one copy of each.  The rule for what belongs here is not "it is generic"
     plotting        shared matplotlib setup and multi-page figure helpers
     timing_ops      DAQ timing primitives (dead time, livetime)
 
-`common` depends on nothing else in the project, which is what keeps the dependency
+`hodoscope_common` depends on nothing else in the project, which is what keeps the dependency
 graph acyclic: every other package may import from here, and this package imports from
 none of them.
 """

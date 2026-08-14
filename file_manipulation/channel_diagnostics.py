@@ -16,13 +16,13 @@ Polarity is auto-detected PER CHANNEL by default, so a file mixing positive-goin
 SiPM/hodoscope channels with negative-going PMT channels is handled correctly: a
 negative channel's trigger and amplitude are measured from its downward excursion.
 The vote is the project's shared 95th-percentile excursion vote
-(common.waveform_ops.resolve_polarity), which keeps the
+(hodoscope_common.waveform_ops.resolve_polarity), which keeps the
 right sign even on a channel that fires on only a modest fraction of events --
 where a median-excursion vote would be decided by noise.  Force it with
 --polarity positive/negative.
 
 Each channel's pulse window is chosen automatically from its own data using the shared
-routine (common.waveform_ops.recommend_window), so peak amplitudes / trigger rates are
+routine (hodoscope_common.waveform_ops.recommend_window), so peak amplitudes / trigger rates are
 measured where each channel's pulse actually sits.  Disable with --no-auto-window to use
 a fixed --pulse-lo/--pulse-hi for every channel.
 
@@ -58,9 +58,9 @@ import numpy as np
 # hodoscope_efficiency would compute (one source of truth).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # repo root (see README)
 
-from common.output_paths import resolve_input, resolve_results_dir  # noqa: E402
-from common.plotting import paged_figure, setup_mpl                 # noqa: E402
-from common.waveform_ops import prepare_channel                     # noqa: E402
+from hodoscope_common.output_paths import resolve_input, resolve_results_dir  # noqa: E402
+from hodoscope_common.plotting import paged_figure, setup_mpl                 # noqa: E402
+from hodoscope_common.waveform_ops import prepare_channel                     # noqa: E402
 
 logger = logging.getLogger("channel_diagnostics")
 

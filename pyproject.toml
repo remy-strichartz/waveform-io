@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "waveform-io"
+version = "0.1.0"
+description = "Muon hodoscope waveform I/O: the on-disk layout, DAQ ingestion, clock recovery and the shared waveform primitives"
+requires-python = ">=3.11"
+
+# Kept in sync with requirements.txt.  This repo is the base of the stack -- waveform-qc and
+# waveform-analysis both install it -- so its dependency list is deliberately the smallest of
+# the three.  In particular there is NO scipy here: peakfind.py implements the peak search
+# this layer needs directly (a documented subset of scipy.signal.find_peaks), which is what
+# lets the shared code stay light enough to be a dependency of everything else.
+dependencies = [
+    "numpy",
+    "h5py",
+    "matplotlib",
+]
+
+[tool.setuptools]
+# Both are top-level packages, imported as `hodoscope_common.output_paths` and
+# `file_manipulation.midas_to_h5` from any environment this is installed into:
+#     pip install -e .
+# Installing is OPTIONAL here: every script also puts the repo root on sys.path itself, so
+# `python file_manipulation/midas_to_h5.py ...` works from a bare checkout.  It is NOT
+# optional for the downstream repos, which have no other way to reach `hodoscope_common`.
+packages = [
+    "hodoscope_common",
+    "file_manipulation",
+]
+
+[tool.pytest.ini_options]
+# The suites are also plain scripts (`python hodoscope_common/tests/test_declip.py`);
+# this only makes `pytest` from the repo root find both of them.
+testpaths = [
+    "hodoscope_common/tests",
+    "file_manipulation/tests",
+]

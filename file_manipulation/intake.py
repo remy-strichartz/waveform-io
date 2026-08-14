@@ -61,7 +61,7 @@ Portability
 -----------
 This file is deliberately SELF-CONTAINED (h5py + numpy only) so it can be
 dropped into another workspace as-is.  Inside this repo it uses the shared
-layout helpers in common/output_paths.py, so it stays byte-for-byte consistent
+layout helpers in hodoscope_common/output_paths.py, so it stays byte-for-byte consistent
 with where every other tool reads and writes; standalone, identical built-in
 fallbacks create ``waveform_files/`` beside the script (override with
 ``--dest``).
@@ -101,7 +101,7 @@ logger = logging.getLogger("intake")
 CHUNK_EVENTS = 200          # events per write block (bounds peak memory)
 _EVENT_RE = re.compile(r"(\d+)")
 
-# Kind subfolders inside a dataset folder (mirrors common/output_paths.KINDS).
+# Kind subfolders inside a dataset folder (mirrors hodoscope_common/output_paths.KINDS).
 RAW           = "raw"
 MULTI_CHANNEL = "multi_channel"
 
@@ -115,7 +115,7 @@ MULTI_CHANNEL = "multi_channel"
 
 try:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from common.output_paths import (WAVEFORM_DIR as _DEFAULT_BASE,
+    from hodoscope_common.output_paths import (WAVEFORM_DIR as _DEFAULT_BASE,
                                      compression_kwargs, dataset_of)
 except ImportError:                                            # standalone copy
     _DEFAULT_BASE = Path(__file__).resolve().parent / "waveform_files"
@@ -145,7 +145,7 @@ except ImportError:                                            # standalone copy
 def run_dir_for(source: Path, base: Path) -> Path:
     """The dataset folder `source` belongs to: the folder it already sits in when it
     is inside the layout (so hand-sorted files stay in their group), else a folder
-    named after it.  Mirrors common/output_paths.run_dir, parameterized by base."""
+    named after it.  Mirrors hodoscope_common/output_paths.run_dir, parameterized by base."""
     src = source.resolve()
     base = base.resolve()
     if base in src.parents:

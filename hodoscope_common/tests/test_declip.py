@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression tests for common/declip.py (saturated-pulse reconstruction).
+"""Regression tests for hodoscope_common/declip.py (saturated-pulse reconstruction).
 
 Synthetic pulses with known truth throughout. What is pinned down:
 
@@ -18,7 +18,7 @@ Synthetic pulses with known truth throughout. What is pinned down:
                   and closure_curve refuses (< min_events) rather than
                   returning a curve made of noise.
 
-Run with the project's python: python common/tests/test_declip.py
+Run with the project's python: python hodoscope_common/tests/test_declip.py
 Plain asserts, ASCII-only output; also importable by pytest.
 """
 
@@ -31,7 +31,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))  # repo root
 
-from common import declip  # noqa: E402
+from hodoscope_common import declip  # noqa: E402
 
 W = 200          # samples per synthetic record
 PEAK = 80        # true crest position

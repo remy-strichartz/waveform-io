@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Put every file under waveform_files/ where the shared layout says it belongs.
 
-The layout (common/output_paths.py) groups each dataset in a folder of its own
+The layout (hodoscope_common/output_paths.py) groups each dataset in a folder of its own
 and splits that folder by KIND, so a run's channels, their time axes, its multi-channel
 cubes and its .mid stop burying each other:
 
@@ -39,7 +39,7 @@ import h5py
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # repo root (see README)
 
-from common.output_paths import (CHANNELS, KINDS, MULTI_CHANNEL,  # noqa: E402
+from hodoscope_common.output_paths import (CHANNELS, KINDS, MULTI_CHANNEL,  # noqa: E402
                                  WAVEFORM_DIR, is_data_file, kind_of, run_dir)
 
 logger = logging.getLogger("organize_waveforms")

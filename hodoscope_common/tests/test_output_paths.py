@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Regression tests for the waveform-file layout (common/output_paths.py).
+Regression tests for the waveform-file layout (hodoscope_common/output_paths.py).
 
 The layout is a CONTRACT between programs that never call each other: the converters
 write into waveform_files/<run>/<kind>/, and the analyzers -- given only a bare filename
@@ -29,7 +29,7 @@ Plain asserts, ASCII-only output; also importable by pytest (test_* functions).
 
 Run it with any python (no h5py/numpy needed):
 
-    python common/tests/test_output_paths.py
+    python hodoscope_common/tests/test_output_paths.py
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))  # repo root
 
-from common import output_paths as P  # noqa: E402
+from hodoscope_common import output_paths as P  # noqa: E402
 
 RUN = "run00270"
 

@@ -27,10 +27,17 @@ exactly as given, for both reading and writing.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
-WAVEFORM_DIR = Path(__file__).resolve().parent.parent / "waveform_files"
+# $WAVEFORM_FILES wins, because this package is INSTALLED into its callers' environments
+# (pip install -e ../waveform-io) rather than sitting beside them the way it did when every
+# stage lived in one repo: deriving the tree from __file__ alone would point at wherever pip
+# put the package, not at the analyst's data.  The __file__ fallback is the old behaviour
+# exactly, so a bare checkout of this repo still works with no environment set.
+WAVEFORM_DIR = Path(os.environ.get("WAVEFORM_FILES")
+                    or Path(__file__).resolve().parent.parent / "waveform_files")
 
 # The kind subfolders inside a dataset folder.
 RAW           = "raw"

@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-logger = logging.getLogger("common.plotting")
+logger = logging.getLogger("hodoscope_common.plotting")
 
 
 def setup_mpl(show: bool):
