@@ -1,8 +1,11 @@
 # Data provenance
 
-The waveform data is not in this repo (see `.gitignore`). This file records where it came
-from and how to prove a future copy is the same file, since everything in
-`energy_reconstruction_results/` and friends is only as trustworthy as the raw run behind it.
+The waveform data is not in this repo (see `.gitignore`) — point `$WAVEFORM_FILES` at
+wherever it lives. This file records where each dataset came from and how to prove a
+future copy is the same file, since every results tree in the downstream repos
+(waveform-qc, waveform-analysis) is only as trustworthy as the raw run behind it.
+
+This repo owns the ingestion, so the commands below run from here.
 
 ## run00270 — the reference dataset
 
@@ -71,11 +74,12 @@ byte-identical extract of the tar member of the same name — a duplicate, not n
 attributes record `reformatted_by = caen_to_h5.py` and `source_file =
 waveform_files\caen.h5`, but that vendor original is no longer on the analysis machine and
 `caen_to_h5.py` was deleted when `intake.py` became the single CAEN front door (2026-07-30).
-Nothing in this repo can rebuild `caen.h5`, so it is a **terminal artifact like
-`run00270.mid`** — which is exactly why its hash is recorded here rather than left implicit.
+No code in any of the three repos can rebuild `caen.h5`, so it is a **terminal artifact
+like `run00270.mid`** — which is exactly why its hash is recorded here rather than left
+implicit.
 
-It matters because `caen_ch0` is a job in the canonical `run_batch.py` sweep: its muon-mode
-MPV is a number of record. The per-channel file `caen_ch0.h5` (539,283 bytes, sha256
+It matters because `caen_ch0` is a job in the canonical `run_batch.py` sweep
+(waveform-analysis): its muon-mode MPV is a number of record. The per-channel file `caen_ch0.h5` (539,283 bytes, sha256
 `b0d94f388062d09cec625dead42420871b09f58c193dc626ceadeb4ca3161983`) *is* derived and
 regenerable from it with `extract_channels.py`.
 
